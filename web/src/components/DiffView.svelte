@@ -85,19 +85,19 @@
 
 <div class="diff-wrap">
   {#if mode === 'created'}
-    <div class="banner created">＋ nuevo archivo</div>
+    <div class="banner created">＋ new file</div>
   {:else if mode === 'deleted'}
-    <div class="banner deleted">－ archivo eliminado</div>
+    <div class="banner deleted">－ deleted file</div>
   {/if}
 
   <div class="diff-host" class:single={mode === 'created' || mode === 'deleted'} bind:this={host}></div>
 
   {#if loading}
-    <div class="status">Cargando diff…</div>
+    <div class="status">Loading diff…</div>
   {:else if !content}
-    <div class="status">Selecciona un archivo en la barra lateral para ver su diff.</div>
+    <div class="status">Select a file in the sidebar to view its diff.</div>
   {:else if mode === 'diff' && !content.beforeAvailable}
-    <div class="status">Sin estado previo registrado para este archivo en esta sesión.</div>
+    <div class="status">No previous state recorded for this file in this session.</div>
   {/if}
 </div>
 

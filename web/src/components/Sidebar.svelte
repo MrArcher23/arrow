@@ -86,7 +86,7 @@
     <span class="fname">{basename(f.path)}</span>
     {#if dir}<span class="fdir">{dir}</span>{/if}
     <span class="stats"><span class="add">+{f.added}</span><span class="del">-{f.removed}</span></span>
-    {#if f.userModified}<span class="flag" title="Modificado fuera de Claude">⚠</span>{/if}
+    {#if f.userModified}<span class="flag" title="Modified outside Claude">⚠</span>{/if}
   </button>
 {/snippet}
 
@@ -105,7 +105,7 @@
     {#if openRepos[repo.cwd]}
       {#if current}
         <div class="current-head">
-          {#if live}<span class="badge">● en vivo</span>{/if}
+          {#if live}<span class="badge">● live</span>{/if}
           <span class="stitle" title={titleOf(current)}>{titleOf(current)}</span>
           <span class="time">{relative(current.lastActivity)}</span>
         </div>
@@ -117,7 +117,7 @@
       {#if rest.length}
         <button class="row hist-head" onclick={() => (openHist = toggle(openHist, repo.cwd))}>
           <span class="chev">{openHist[repo.cwd] ? '▾' : '▸'}</span>
-          <span class="hist-label">Historial</span>
+          <span class="hist-label">History</span>
           <span class="count">{rest.length}</span>
         </button>
         {#if openHist[repo.cwd]}
@@ -158,7 +158,7 @@
   {#if otherRepos.length}
     <button class="row others-head" onclick={() => (openOthers = !openOthers)}>
       <span class="chev">{openOthers ? '▾' : '▸'}</span>
-      <span class="others-label">Otros repos</span>
+      <span class="others-label">Other repos</span>
       <span class="count">{otherRepos.length}</span>
     </button>
     {#if openOthers}

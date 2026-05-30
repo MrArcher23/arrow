@@ -35,7 +35,10 @@ Empaquetado futuro en **Tauri 2.x** (Fase 2). Estado: Fase 0 y 1 completas (pars
   `invoke()` **sin tocar la UI**. No acoplar componentes Svelte al transporte HTTP.
 
 ## Convenciones
-- Comunícate en **español** (comentarios de código en español; identificadores en inglés).
+- Comunícate en **español**; comentarios de código en español, identificadores en inglés.
+- **Texto visible en la UI en INGLÉS** (labels, estados, títulos, tooltips, banners). arrow es una
+  app de marca inglesa. Ej: `live`, `History`, `Other repos`, `new file`, `5m ago`. Los strings de
+  UI viven en los componentes Svelte y en `web/src/lib/time.ts` (tiempo relativo y buckets de fecha).
 - **Verifica cada cambio del parser contra datos reales** (`/verify-parser`) antes de decir que funciona; reporta la salida, no una afirmación.
 - Commits: mensaje en imperativo; co-autor `Claude Opus 4.8 (1M context)`. Rama `main`. Push solo cuando se pida.
 

@@ -65,9 +65,9 @@
 <div class="app">
   <header class="topbar">
     <span class="brand">arrow</span>
-    <span class="subtitle">auditoría de cambios de Claude Code</span>
+    <span class="subtitle">audit of Claude Code changes</span>
     <div class="actions">
-      {#if liveCount > 0}<span class="live">● {liveCount} en vivo</span>{/if}
+      {#if liveCount > 0}<span class="live">● {liveCount} live</span>{/if}
       {#if report}<span class="repos">{report.repoCount} repos</span>{/if}
       <ThemeMenu current={theme} onSelect={(id) => (theme = id)} />
     </div>
@@ -81,7 +81,7 @@
       {#if report}
         <Sidebar {report} {selected} onSelect={select} />
       {:else if !error}
-        <div class="loading">Cargando sesiones…</div>
+        <div class="loading">Loading sessions…</div>
       {/if}
     </aside>
 
@@ -90,7 +90,7 @@
         <div class="filebar">
           <span class="filepath">{selected.path}</span>
           {#if content?.userModified}
-            <span class="warn">⚠ modificado fuera de Claude</span>
+            <span class="warn">⚠ modified outside Claude</span>
           {/if}
         </div>
       {/if}

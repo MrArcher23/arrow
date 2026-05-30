@@ -1,4 +1,5 @@
 // Utilidades de tiempo: "en vivo", tiempo relativo y buckets de fecha para el historial.
+// (Los strings devueltos son texto de UI -> en inglés.)
 
 const MIN = 60_000
 const HOUR = 3_600_000
@@ -17,24 +18,24 @@ export function relative(iso?: string | null): string {
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return ''
   const d = Date.now() - t
-  if (d < MIN) return 'ahora'
-  if (d < HOUR) return `hace ${Math.floor(d / MIN)} min`
-  if (d < DAY) return `hace ${Math.floor(d / HOUR)} h`
+  if (d < MIN) return 'now'
+  if (d < HOUR) return `${Math.floor(d / MIN)}m ago`
+  if (d < DAY) return `${Math.floor(d / HOUR)}h ago`
   const days = Math.floor(d / DAY)
-  if (days < 30) return `hace ${days} d`
-  return new Date(t).toLocaleDateString('es', { day: 'numeric', month: 'short' })
+  if (days < 30) return `${days}d ago`
+  return new Date(t).toLocaleDateString('en', { day: 'numeric', month: 'short' })
 }
 
-export const BUCKET_ORDER = ['Hoy', 'Ayer', 'Esta semana', 'Más antiguo', 'Sin fecha']
+export const BUCKET_ORDER = ['Today', 'Yesterday', 'This week', 'Older', 'No date']
 
 export function dateBucket(iso?: string | null): string {
-  if (!iso) return 'Sin fecha'
+  if (!iso) return 'No date'
   const t = Date.parse(iso)
-  if (Number.isNaN(t)) return 'Sin fecha'
+  if (Number.isNaN(t)) return 'No date'
   const now = new Date()
   const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  if (t >= startToday) return 'Hoy'
-  if (t >= startToday - DAY) return 'Ayer'
-  if (t >= startToday - 6 * DAY) return 'Esta semana'
-  return 'Más antiguo'
+  if (t >= startToday) return 'Today'
+  if (t >= startToday - DAY) return 'Yesterday'
+  if (t >= startToday - 6 * DAY) return 'This week'
+  return 'Older'
 }
