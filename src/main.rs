@@ -296,6 +296,10 @@ fn ingest(
         Some(s) => s.to_string(),
         None => return,
     };
+    // Archivos internos de Claude (memoria, historial…) NO son cambios de tu código.
+    if file_path.contains("/.claude/") {
+        return;
+    }
     let cwd = v
         .get("cwd")
         .and_then(Value::as_str)
@@ -312,8 +316,12 @@ fn ingest(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
+    // El repo es la raíz git del cwd de la sesión (fusiona subdirectorios como
+    // web/ con su repo). Estable aunque el proyecto no sea git.
+    let repo_key = git_root(&cwd, roots);
+
     if let Some(rf) = &cli.repo {
-        if !cwd.contains(rf) {
+        if !repo_key.contains(rf) {
             return;
         }
     }
@@ -323,7 +331,6 @@ fn ingest(
         }
     }
 
-    let repo_key = git_root(&cwd, roots);
     let repo = repos.entry(repo_key).or_default();
     if repo.git_branch.is_none() {
         repo.git_branch = branch;
