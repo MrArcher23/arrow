@@ -1,0 +1,16 @@
+[package]
+name = "arrow"
+version = "0.1.0"
+edition = "2021"
+description = "Audita qué archivos tocó Claude Code y con qué diff, leyendo sus datos nativos (~/.claude/projects) — sin hooks, sin git."
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+opt-level = 2
