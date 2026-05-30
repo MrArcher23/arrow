@@ -2,8 +2,10 @@
   import { onMount } from 'svelte'
   import Sidebar from './components/Sidebar.svelte'
   import DiffView from './components/DiffView.svelte'
+  import ThemeMenu from './components/ThemeMenu.svelte'
   import { loadReport, loadContent } from './lib/api'
   import { isLive } from './lib/time'
+  import { DEFAULT_THEME } from './lib/themes'
   import type { Report, FileContent } from './lib/types'
 
   let report = $state<Report | null>(null)
@@ -11,15 +13,19 @@
   let content = $state<FileContent | null>(null)
   let loadingContent = $state(false)
   let selected = $state<{ session: string; path: string } | null>(null)
+  let theme = $state(localStorage.getItem('arrow.theme') ?? DEFAULT_THEME)
 
   let liveCount = $derived(
     report ? report.repos.filter((r) => isLive(r.sessions[0]?.lastActivity)).length : 0
   )
 
+  $effect(() => {
+    localStorage.setItem('arrow.theme', theme)
+  })
+
   onMount(async () => {
     try {
       report = await loadReport()
-      // Foco automático en la sesión más reciente (repos ya vienen ordenados).
       const s = report.repos[0]?.sessions[0]
       const f = s?.files[0]
       if (s && f) select(s.sessionId, f.path)
@@ -46,10 +52,11 @@
   <header class="topbar">
     <span class="brand">arrow</span>
     <span class="subtitle">auditoría de cambios de Claude Code</span>
-    <span class="meta">
+    <div class="actions">
       {#if liveCount > 0}<span class="live">● {liveCount} en vivo</span>{/if}
       {#if report}<span class="repos">{report.repoCount} repos</span>{/if}
-    </span>
+      <ThemeMenu current={theme} onSelect={(id) => (theme = id)} />
+    </div>
   </header>
 
   <div class="layout">
@@ -74,7 +81,7 @@
         </div>
       {/if}
       <div class="diff-area">
-        <DiffView {content} loading={loadingContent} />
+        <DiffView {content} loading={loadingContent} themeId={theme} />
       </div>
     </main>
   </div>
@@ -88,9 +95,9 @@
   }
   .topbar {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 10px;
-    padding: 10px 16px;
+    padding: 8px 16px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
     flex: none;
@@ -103,9 +110,10 @@
     color: var(--dim);
     font-size: 12px;
   }
-  .meta {
+  .actions {
     margin-left: auto;
     display: flex;
+    align-items: center;
     gap: 12px;
     font-size: 12px;
   }

@@ -2,35 +2,32 @@
   import { MergeView } from '@codemirror/merge'
   import { EditorView, lineNumbers } from '@codemirror/view'
   import { EditorState } from '@codemirror/state'
+  import type { Extension } from '@codemirror/state'
   import type { FileContent } from '../lib/types'
+  import { themeExt } from '../lib/themes'
+  import { resolveLanguage } from '../lib/highlight'
 
   interface Props {
     content: FileContent | null
     loading: boolean
+    themeId: string
   }
-  let { content, loading }: Props = $props()
+  let { content, loading, themeId }: Props = $props()
 
   let host = $state<HTMLDivElement>()
   let view: { destroy(): void } | null = null
+  let seq = 0
 
-  const theme = EditorView.theme(
-    {
-      '&': { backgroundColor: 'transparent', color: 'var(--fg)' },
-      '.cm-scroller': { fontFamily: 'var(--mono)', fontSize: '12.5px', lineHeight: '1.5' },
-      '.cm-gutters': { backgroundColor: 'transparent', border: 'none', color: 'var(--dim)' },
-      '.cm-activeLineGutter': { backgroundColor: 'transparent' },
-    },
-    { dark: true }
-  )
-
-  function exts() {
-    return [
+  function exts(lang: Extension | null): Extension[] {
+    const e: Extension[] = [
       lineNumbers(),
       EditorView.editable.of(false), // Fase 1: solo lectura. La edición llega en Fase 4.
       EditorState.readOnly.of(true),
       EditorView.lineWrapping,
-      theme,
+      themeExt(themeId),
     ]
+    if (lang) e.push(lang)
+    return e
   }
 
   // Clasifica el cambio para no partir la pantalla cuando no hay nada que comparar.
@@ -39,7 +36,7 @@
     const b = c.before ?? ''
     const a = c.after ?? ''
     if (a === '' && b !== '') return 'deleted'
-    if (b === '') return 'created' // archivo nuevo (sin "antes" que comparar)
+    if (b === '') return 'created'
     return 'diff'
   }
 
@@ -52,26 +49,35 @@
     }
   }
 
+  async function build(c: FileContent) {
+    const my = ++seq
+    const lang = await resolveLanguage(c.file) // carga perezosa del parser
+    if (my !== seq || !host) return // descartar si llegó otro cambio mientras cargaba
+    dispose()
+    const m = classify(c)
+    if (m === 'diff') {
+      view = new MergeView({
+        a: { doc: c.before, extensions: exts(lang) },
+        b: { doc: c.after, extensions: exts(lang) },
+        parent: host,
+        collapseUnchanged: { margin: 3, minSize: 4 },
+      })
+    } else {
+      view = new EditorView({
+        doc: m === 'deleted' ? c.before : c.after,
+        extensions: exts(lang),
+        parent: host,
+      })
+    }
+  }
+
   $effect(() => {
     const c = content
-    dispose()
+    themeId // dependencia: recrear al cambiar de tema
     if (host && c) {
-      const m = classify(c)
-      if (m === 'diff') {
-        view = new MergeView({
-          a: { doc: c.before, extensions: exts() },
-          b: { doc: c.after, extensions: exts() },
-          parent: host,
-          collapseUnchanged: { margin: 3, minSize: 4 },
-        })
-      } else {
-        // Un solo panel: nuevo (after) o eliminado (before).
-        view = new EditorView({
-          doc: m === 'deleted' ? c.before : c.after,
-          extensions: exts(),
-          parent: host,
-        })
-      }
+      build(c)
+    } else {
+      dispose()
     }
     return dispose
   })
@@ -125,9 +131,6 @@
   .diff-host :global(.cm-mergeView),
   .diff-host :global(.cm-editor) {
     height: 100%;
-  }
-  .diff-host.single :global(.cm-gutters) {
-    border-right: 2px solid #3fb95044;
   }
   .status {
     position: absolute;
