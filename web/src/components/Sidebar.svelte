@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Report, Session } from '../lib/types'
+  import type { Report, Repo, Session } from '../lib/types'
   import { isLive, relative, dateBucket, BUCKET_ORDER } from '../lib/time'
 
   interface Props {
@@ -9,13 +9,20 @@
   }
   let { report, selected, onSelect }: Props = $props()
 
-  // Repos en vivo se auto-expanden; el resto arrancan colapsados.
+  // Foco: repos en vivo (<20 min). Si ninguno, el más reciente. El resto va a "Otros repos".
+  let liveRepos = $derived(report.repos.filter((r) => isLive(r.sessions[0]?.lastActivity)))
+  let focusRepos = $derived(liveRepos.length ? liveRepos : report.repos.slice(0, 1))
+  let otherRepos = $derived(report.repos.filter((r) => !focusRepos.includes(r)))
+
   function initRepos() {
     const o: Record<string, boolean> = {}
-    for (const r of report.repos) o[r.cwd] = isLive(r.sessions[0]?.lastActivity)
+    const live = report.repos.filter((r) => isLive(r.sessions[0]?.lastActivity))
+    const focus = live.length ? live : report.repos.slice(0, 1)
+    for (const r of focus) o[r.cwd] = true
     return o
   }
   let openRepos = $state<Record<string, boolean>>(initRepos())
+  let openOthers = $state(false)
   let openHist = $state<Record<string, boolean>>({})
   let openBucket = $state<Record<string, boolean>>({})
   let openSess = $state<Record<string, boolean>>({})
@@ -41,87 +48,99 @@
   }
 </script>
 
-<nav class="tree">
-  {#each report.repos as repo}
-    {@const current = repo.sessions[0]}
-    {@const rest = repo.sessions.slice(1)}
-    {@const live = isLive(current?.lastActivity)}
+{#snippet fileRow(sessionId: string, f: any, deep: boolean)}
+  <button
+    class="row file"
+    class:deep
+    class:active={selected?.session === sessionId && selected?.path === f.path}
+    onclick={() => onSelect(sessionId, f.path)}
+    title={f.path}
+  >
+    <span class="fname">{basename(f.path)}</span>
+    <span class="stats"><span class="add">+{f.added}</span><span class="del">-{f.removed}</span></span>
+    {#if f.userModified}<span class="flag" title="Modificado fuera de Claude">⚠</span>{/if}
+  </button>
+{/snippet}
 
-    <div class="repo">
-      <button class="row repo-head" onclick={() => (openRepos = toggle(openRepos, repo.cwd))} title={repo.cwd}>
-        <span class="chev">{openRepos[repo.cwd] ? '▾' : '▸'}</span>
-        {#if live}<span class="dot"></span>{/if}
-        <span class="repo-name">{basename(repo.cwd)}</span>
-        {#if repo.gitBranch}<span class="branch">{repo.gitBranch}</span>{/if}
-      </button>
+{#snippet repoRow(repo: Repo)}
+  {@const current = repo.sessions[0]}
+  {@const rest = repo.sessions.slice(1)}
+  {@const live = isLive(current?.lastActivity)}
+  <div class="repo">
+    <button class="row repo-head" onclick={() => (openRepos = toggle(openRepos, repo.cwd))} title={repo.cwd}>
+      <span class="chev">{openRepos[repo.cwd] ? '▾' : '▸'}</span>
+      {#if live}<span class="dot"></span>{/if}
+      <span class="repo-name">{basename(repo.cwd)}</span>
+      {#if repo.gitBranch}<span class="branch">{repo.gitBranch}</span>{/if}
+    </button>
 
-      {#if openRepos[repo.cwd]}
-        {#if current}
-          <div class="current-head">
-            {#if live}<span class="badge">● en vivo</span>{/if}
-            <span class="stitle" title={titleOf(current)}>{titleOf(current)}</span>
-            <span class="time">{relative(current.lastActivity)}</span>
-          </div>
-          {#each current.files as f}
-            <button
-              class="row file"
-              class:active={selected?.session === current.sessionId && selected?.path === f.path}
-              onclick={() => onSelect(current.sessionId, f.path)}
-              title={f.path}
-            >
-              <span class="fname">{basename(f.path)}</span>
-              <span class="stats"><span class="add">+{f.added}</span><span class="del">-{f.removed}</span></span>
-              {#if f.userModified}<span class="flag" title="Modificado fuera de Claude">⚠</span>{/if}
+    {#if openRepos[repo.cwd]}
+      {#if current}
+        <div class="current-head">
+          {#if live}<span class="badge">● en vivo</span>{/if}
+          <span class="stitle" title={titleOf(current)}>{titleOf(current)}</span>
+          <span class="time">{relative(current.lastActivity)}</span>
+        </div>
+        {#each current.files as f}
+          {@render fileRow(current.sessionId, f, false)}
+        {/each}
+      {/if}
+
+      {#if rest.length}
+        <button class="row hist-head" onclick={() => (openHist = toggle(openHist, repo.cwd))}>
+          <span class="chev">{openHist[repo.cwd] ? '▾' : '▸'}</span>
+          <span class="hist-label">Historial</span>
+          <span class="count">{rest.length}</span>
+        </button>
+        {#if openHist[repo.cwd]}
+          {#each buckets(rest) as grp}
+            {@const bkey = repo.cwd + '::' + grp.bucket}
+            <button class="row bucket-head" onclick={() => (openBucket = toggle(openBucket, bkey))}>
+              <span class="chev">{openBucket[bkey] ? '▾' : '▸'}</span>
+              <span class="bucket-label">{grp.bucket}</span>
+              <span class="count">{grp.sessions.length}</span>
             </button>
+            {#if openBucket[bkey]}
+              {#each grp.sessions as s}
+                {@const skey = repo.cwd + '::' + s.sessionId}
+                <button class="row hist-session" onclick={() => (openSess = toggle(openSess, skey))} title={titleOf(s)}>
+                  <span class="chev">{openSess[skey] ? '▾' : '▸'}</span>
+                  <span class="stitle small">{titleOf(s)}</span>
+                  <span class="time">{relative(s.lastActivity)}</span>
+                </button>
+                {#if openSess[skey]}
+                  {#each s.files as f}
+                    {@render fileRow(s.sessionId, f, true)}
+                  {/each}
+                {/if}
+              {/each}
+            {/if}
           {/each}
         {/if}
-
-        {#if rest.length}
-          <button class="row hist-head" onclick={() => (openHist = toggle(openHist, repo.cwd))}>
-            <span class="chev">{openHist[repo.cwd] ? '▾' : '▸'}</span>
-            <span class="hist-label">Historial</span>
-            <span class="count">{rest.length}</span>
-          </button>
-
-          {#if openHist[repo.cwd]}
-            {#each buckets(rest) as grp}
-              {@const bkey = repo.cwd + '::' + grp.bucket}
-              <button class="row bucket-head" onclick={() => (openBucket = toggle(openBucket, bkey))}>
-                <span class="chev">{openBucket[bkey] ? '▾' : '▸'}</span>
-                <span class="bucket-label">{grp.bucket}</span>
-                <span class="count">{grp.sessions.length}</span>
-              </button>
-
-              {#if openBucket[bkey]}
-                {#each grp.sessions as s}
-                  {@const skey = repo.cwd + '::' + s.sessionId}
-                  <button class="row hist-session" onclick={() => (openSess = toggle(openSess, skey))} title={titleOf(s)}>
-                    <span class="chev">{openSess[skey] ? '▾' : '▸'}</span>
-                    <span class="stitle small">{titleOf(s)}</span>
-                    <span class="time">{relative(s.lastActivity)}</span>
-                  </button>
-                  {#if openSess[skey]}
-                    {#each s.files as f}
-                      <button
-                        class="row file deep"
-                        class:active={selected?.session === s.sessionId && selected?.path === f.path}
-                        onclick={() => onSelect(s.sessionId, f.path)}
-                        title={f.path}
-                      >
-                        <span class="fname">{basename(f.path)}</span>
-                        <span class="stats"><span class="add">+{f.added}</span><span class="del">-{f.removed}</span></span>
-                        {#if f.userModified}<span class="flag">⚠</span>{/if}
-                      </button>
-                    {/each}
-                  {/if}
-                {/each}
-              {/if}
-            {/each}
-          {/if}
-        {/if}
       {/if}
-    </div>
+    {/if}
+  </div>
+{/snippet}
+
+<nav class="tree">
+  {#each focusRepos as repo}
+    {@render repoRow(repo)}
   {/each}
+
+  {#if otherRepos.length}
+    <button class="row others-head" onclick={() => (openOthers = !openOthers)}>
+      <span class="chev">{openOthers ? '▾' : '▸'}</span>
+      <span class="others-label">Otros repos</span>
+      <span class="count">{otherRepos.length}</span>
+    </button>
+    {#if openOthers}
+      <div class="others">
+        {#each otherRepos as repo}
+          {@render repoRow(repo)}
+        {/each}
+      </div>
+    {/if}
+  {/if}
 </nav>
 
 <style>
@@ -179,7 +198,6 @@
     text-overflow: ellipsis;
     flex: none;
   }
-
   .current-head {
     display: flex;
     align-items: center;
@@ -213,7 +231,6 @@
     white-space: nowrap;
     flex: none;
   }
-
   .file {
     padding-left: 28px;
   }
@@ -246,7 +263,6 @@
     flex: none;
     color: var(--warn);
   }
-
   .hist-head {
     padding-left: 22px;
     color: var(--dim);
@@ -267,5 +283,21 @@
     color: var(--dim);
     font-size: 11px;
     flex: none;
+  }
+  .others-head {
+    margin-top: 8px;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    padding-top: 8px;
+    color: var(--dim);
+    font-size: 12px;
+  }
+  .others-label {
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 11px;
+  }
+  .others {
+    opacity: 0.85;
   }
 </style>
