@@ -59,13 +59,29 @@ cargo build --release
 ```
 
 Opciones: `--projects-dir <ruta>` (por defecto `~/.claude/projects`), `--repo`, `--session`,
-`--list`, `--json`.
+`--list`, `--json`, y `--content --file <ruta> [--session <id>]` (emite `{before, after}` de un
+archivo, para la vista de diff de la UI).
+
+## UI web (Fase 1)
+
+App Vite + Svelte 5 que consume el parser vía un dev-server local que ejecuta el binario `arrow`
+(en `web/vite.config.ts`). La vista de diff usa **CodeMirror 6 + `@codemirror/merge`**.
+
+```bash
+cargo build --release          # el dev-server ejecuta target/release/arrow
+cd web && npm install
+npm run dev                     # http://localhost:5173
+```
+
+Layout: sidebar `repo → sesión → archivos tocados` (con `+/-` y ⚠ `userModified`), panel central
+con el diff before/after del archivo seleccionado. Todo el peso del frontend: ~93 KB gzip.
 
 ## Roadmap
 
 - [x] **Fase 0** — parser nativo `JSONL → repo/sesión/archivo/diff`, salida en terminal y `--json`.
-- [ ] **Fase 1** — UI web local (Vite) consumiendo el `--json`: sidebar `repos → archivos`
-      (estilo Antigravity) + diff por archivo con **CodeMirror 6 + `@codemirror/merge`**.
+- [x] **Fase 1** — UI web local (Vite + Svelte 5) consumiendo el parser: sidebar
+      `repo → sesión → archivos` (estilo Antigravity) + diff por archivo con
+      **CodeMirror 6 + `@codemirror/merge`**. (Solo lectura; la edición es Fase 4.)
 - [ ] **Fase 2** — empaquetar en **Tauri 2.x** (`.deb`/AppImage). El parser de Rust pasa a ser
       el backend nativo (sin sidecar). Watcher por mtime para refresco en vivo.
 - [ ] **Fase 3** — honestidad + git: toggle "git diff working tree", marcado de `userModified`,

@@ -49,6 +49,14 @@ struct Cli {
     /// Emite el modelo normalizado como JSON (el contrato para la futura UI)
     #[arg(long)]
     json: bool,
+
+    /// Modo contenido: emite JSON {before, after} de UN archivo (requiere --file)
+    #[arg(long)]
+    content: bool,
+
+    /// Ruta exacta del archivo (para --content)
+    #[arg(long)]
+    file: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +142,21 @@ struct HunkOut {
     lines: Vec<String>,
 }
 
+/// Salida del modo `--content`: el "antes" (primer originalFile de la sesión)
+/// y el "después" (archivo actual en disco), para alimentar @codemirror/merge.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentOut {
+    file: String,
+    session: Option<String>,
+    before: String,
+    after: String,
+    before_available: bool,
+    after_available: bool,
+    user_modified: bool,
+    ops: usize,
+}
+
 // ---------------------------------------------------------------------------
 
 const RESET: &str = "\x1b[0m";
@@ -151,6 +174,10 @@ fn main() -> Result<()> {
         .projects_dir
         .clone()
         .unwrap_or_else(|| format!("{home}/.claude/projects"));
+
+    if cli.content {
+        return run_content(&cli, &projects_dir);
+    }
 
     let mut repos: BTreeMap<String, Repo> = BTreeMap::new();
     let mut jsonl_files = 0usize;
@@ -311,6 +338,82 @@ fn build_report(projects_dir: &str, repos: &BTreeMap<String, Repo>) -> ReportOut
         repo_count: repos.len(),
         repos: repos_out,
     }
+}
+
+/// Reúne el "antes" (primer `originalFile` de la sesión para ese archivo) y el
+/// "después" (archivo actual en disco) de UN archivo, para la vista de diff.
+fn run_content(cli: &Cli, projects_dir: &str) -> Result<()> {
+    let target = cli
+        .file
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("--content requiere --file <ruta>"))?;
+
+    let mut before: Option<String> = None;
+    let mut ops = 0usize;
+    let mut user_modified = false;
+
+    for entry in WalkDir::new(projects_dir).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+            continue;
+        }
+        let file = match File::open(path) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let v: Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let tur = match v.get("toolUseResult") {
+                Some(t) if t.is_object() => t,
+                _ => continue,
+            };
+            if tur.get("filePath").and_then(Value::as_str) != Some(target.as_str()) {
+                continue;
+            }
+            if let Some(sf) = &cli.session {
+                let sid = v.get("sessionId").and_then(Value::as_str).unwrap_or("");
+                if !sid.starts_with(sf) {
+                    continue;
+                }
+            }
+            ops += 1;
+            if before.is_none() {
+                before = Some(
+                    tur.get("originalFile")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                );
+            }
+            if tur.get("userModified").and_then(Value::as_bool).unwrap_or(false) {
+                user_modified = true;
+            }
+        }
+    }
+
+    let (after, after_available) = match std::fs::read_to_string(&target) {
+        Ok(s) => (s, true),
+        Err(_) => (String::new(), false),
+    };
+
+    let out = ContentOut {
+        file: target,
+        session: cli.session.clone(),
+        before_available: before.is_some(),
+        before: before.unwrap_or_default(),
+        after,
+        after_available,
+        user_modified,
+        ops,
+    };
+    println!("{}", serde_json::to_string(&out)?);
+    Ok(())
 }
 
 fn render_terminal(
