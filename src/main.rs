@@ -1,21 +1,27 @@
-//! arrow — Fase 0
+//! arrow — parser de auditoría de Claude Code
 //!
 //! Reconstruye "repo -> sesión -> archivo -> diff" leyendo los transcripts
-//! NATIVOS de Claude Code en `~/.claude/projects/**/*.jsonl`, sin hooks y sin git.
+//! NATIVOS de Claude Code en `~/.claude/projects/*/<sessionId>.jsonl`, sin hooks
+//! y sin git.
 //!
 //! Fuente de verdad (verificada en disco, Claude Code v2.1.x):
 //!   - Cada `Edit`/`Write`/`MultiEdit` emite, en un record `type:"user"`, un campo
 //!     top-level `toolUseResult` con: filePath, structuredPatch (hunks exactos),
 //!     userModified y, para Write, `type` = "create"/"update".
-//!   - El `cwd` de cada record es la ruta real del repo (no decodificamos el nombre
-//!     del directorio, que es ambiguo cuando la ruta ya contiene guiones).
+//!   - El `cwd` de cada record es la ruta real del repo.
+//!   - Metadatos legibles por sesión: `type:"ai-title"` -> aiTitle (título humano),
+//!     `type:"last-prompt"` -> lastPrompt, y `timestamp` en cada record (actividad).
+//!
+//! Solo se consideran "sesiones" los transcripts de PRIMER NIVEL dentro de cada
+//! directorio de proyecto; los .jsonl anidados (subagentes, workflows) se ignoran.
 //!
 //! Límite honesto: solo captura lo que pasa por Edit/Write/MultiEdit. Cambios vía
-//! comandos Bash de la sesión (sed, prettier, build, mv, rm) NO aparecen aquí.
+//! comandos Bash (sed, prettier, build, mv, rm) NO aparecen aquí.
 
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::path::Path;
 
 use anyhow::Result;
 use clap::Parser;
@@ -46,7 +52,7 @@ struct Cli {
     #[arg(long)]
     list: bool,
 
-    /// Emite el modelo normalizado como JSON (el contrato para la futura UI)
+    /// Emite el modelo normalizado como JSON (el contrato para la UI)
     #[arg(long)]
     json: bool,
 
@@ -92,8 +98,17 @@ struct Repo {
     sessions: BTreeMap<String, Session>,
 }
 
+/// Metadatos por sesión, recogidos de cualquier record con `sessionId`.
+#[derive(Default)]
+struct SessionMeta {
+    title: Option<String>,
+    last_prompt: Option<String>,
+    first_ts: Option<String>,
+    last_ts: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
-// Salida JSON (contrato estable hacia la UI de la Fase 1)
+// Salida JSON (contrato hacia la UI)
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
@@ -116,6 +131,10 @@ struct RepoOut {
 #[serde(rename_all = "camelCase")]
 struct SessionOut {
     session_id: String,
+    title: Option<String>,
+    last_prompt: Option<String>,
+    first_activity: Option<String>,
+    last_activity: Option<String>,
     file_count: usize,
     files: Vec<FileOut>,
 }
@@ -129,17 +148,6 @@ struct FileOut {
     ops: usize,
     added: usize,
     removed: usize,
-    hunks: Vec<HunkOut>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct HunkOut {
-    old_start: i64,
-    old_lines: i64,
-    new_start: i64,
-    new_lines: i64,
-    lines: Vec<String>,
 }
 
 /// Salida del modo `--content`: el "antes" (primer originalFile de la sesión)
@@ -179,49 +187,109 @@ fn main() -> Result<()> {
         return run_content(&cli, &projects_dir);
     }
 
+    let projects_path = Path::new(&projects_dir);
     let mut repos: BTreeMap<String, Repo> = BTreeMap::new();
+    let mut metas: BTreeMap<String, SessionMeta> = BTreeMap::new();
     let mut jsonl_files = 0usize;
     let mut lines_total = 0usize;
     let mut lines_skipped = 0usize;
 
     for entry in WalkDir::new(&projects_dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
-        if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-            jsonl_files += 1;
-            let file = match File::open(path) {
-                Ok(f) => f,
-                Err(_) => continue,
-            };
-            for line in BufReader::new(file).lines().map_while(Result::ok) {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                lines_total += 1;
-                match serde_json::from_str::<Value>(&line) {
-                    Ok(v) => ingest(&v, &cli, &mut repos),
-                    Err(_) => lines_skipped += 1, // parsing defensivo: formato no documentado
-                }
+        if !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+            continue;
+        }
+        // Solo transcripts de primer nivel: <projectdir>/<sessionId>.jsonl
+        let top_level = path
+            .strip_prefix(projects_path)
+            .map(|r| r.components().count() == 2)
+            .unwrap_or(false);
+        if !top_level {
+            continue;
+        }
+
+        jsonl_files += 1;
+        let file = match File::open(path) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            lines_total += 1;
+            match serde_json::from_str::<Value>(&line) {
+                Ok(v) => ingest(&v, &cli, &mut repos, &mut metas),
+                Err(_) => lines_skipped += 1, // parsing defensivo: formato no documentado
             }
         }
     }
 
     if cli.json {
-        let report = build_report(&projects_dir, &repos);
+        let report = build_report(&projects_dir, &repos, &metas);
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
 
-    render_terminal(&projects_dir, &repos, jsonl_files, lines_total, lines_skipped, cli.list);
+    render_terminal(
+        &projects_dir,
+        &repos,
+        &metas,
+        jsonl_files,
+        lines_total,
+        lines_skipped,
+        cli.list,
+    );
     Ok(())
 }
 
-/// Procesa un record JSONL y, si representa una edición de archivo, la acumula.
-fn ingest(v: &Value, cli: &Cli, repos: &mut BTreeMap<String, Repo>) {
+/// Procesa un record JSONL: actualiza metadatos de sesión y, si representa una
+/// edición de archivo, la acumula.
+fn ingest(
+    v: &Value,
+    cli: &Cli,
+    repos: &mut BTreeMap<String, Repo>,
+    metas: &mut BTreeMap<String, SessionMeta>,
+) {
+    // --- metadatos: cualquier record con sessionId ---
+    if let Some(sid) = v.get("sessionId").and_then(Value::as_str) {
+        let pass = cli
+            .session
+            .as_ref()
+            .map(|sf| sid.starts_with(sf))
+            .unwrap_or(true);
+        if pass {
+            match v.get("type").and_then(Value::as_str) {
+                Some("ai-title") => {
+                    if let Some(t) = v.get("aiTitle").and_then(Value::as_str) {
+                        metas.entry(sid.to_string()).or_default().title = Some(t.to_string());
+                    }
+                }
+                Some("last-prompt") => {
+                    if let Some(p) = v.get("lastPrompt").and_then(Value::as_str) {
+                        metas.entry(sid.to_string()).or_default().last_prompt =
+                            Some(p.to_string());
+                    }
+                }
+                _ => {}
+            }
+            if let Some(ts) = v.get("timestamp").and_then(Value::as_str) {
+                let e = metas.entry(sid.to_string()).or_default();
+                if e.first_ts.as_deref().map(|f| ts < f).unwrap_or(true) {
+                    e.first_ts = Some(ts.to_string());
+                }
+                if e.last_ts.as_deref().map(|l| ts > l).unwrap_or(true) {
+                    e.last_ts = Some(ts.to_string());
+                }
+            }
+        }
+    }
+
+    // --- cambio de archivo: toolUseResult ---
     let tur = match v.get("toolUseResult") {
         Some(t) if t.is_object() => t,
         _ => return,
     };
-    // Solo edits/writes traen filePath; Read/Bash/Glob/Grep no.
     let file_path = match tur.get("filePath").and_then(Value::as_str) {
         Some(s) => s.to_string(),
         None => return,
@@ -293,49 +361,62 @@ fn ingest(v: &Value, cli: &Cli, repos: &mut BTreeMap<String, Repo>) {
     }
 }
 
-fn build_report(projects_dir: &str, repos: &BTreeMap<String, Repo>) -> ReportOut {
-    let repos_out = repos
+/// Construye el reporte JSON, ordenando sesiones y repos por actividad reciente.
+fn build_report(
+    projects_dir: &str,
+    repos: &BTreeMap<String, Repo>,
+    metas: &BTreeMap<String, SessionMeta>,
+) -> ReportOut {
+    let mut repos_out: Vec<RepoOut> = repos
         .iter()
-        .map(|(cwd, repo)| RepoOut {
-            cwd: cwd.clone(),
-            git_branch: repo.git_branch.clone(),
-            sessions: repo
+        .map(|(cwd, repo)| {
+            let mut sessions: Vec<SessionOut> = repo
                 .sessions
                 .iter()
-                .map(|(sid, sess)| SessionOut {
-                    session_id: sid.clone(),
-                    file_count: sess.files.len(),
-                    files: sess
-                        .files
-                        .iter()
-                        .map(|(path, fc)| FileOut {
-                            path: path.clone(),
-                            write_type: fc.write_type.clone(),
-                            user_modified: fc.user_modified,
-                            ops: fc.ops,
-                            added: fc.added,
-                            removed: fc.removed,
-                            hunks: fc
-                                .hunks
-                                .iter()
-                                .map(|h| HunkOut {
-                                    old_start: h.old_start,
-                                    old_lines: h.old_lines,
-                                    new_start: h.new_start,
-                                    new_lines: h.new_lines,
-                                    lines: h.lines.clone(),
-                                })
-                                .collect(),
-                        })
-                        .collect(),
+                .map(|(sid, sess)| {
+                    let m = metas.get(sid);
+                    SessionOut {
+                        session_id: sid.clone(),
+                        title: m.and_then(|m| m.title.clone()),
+                        last_prompt: m.and_then(|m| m.last_prompt.clone()),
+                        first_activity: m.and_then(|m| m.first_ts.clone()),
+                        last_activity: m.and_then(|m| m.last_ts.clone()),
+                        file_count: sess.files.len(),
+                        files: sess
+                            .files
+                            .iter()
+                            .map(|(path, fc)| FileOut {
+                                path: path.clone(),
+                                write_type: fc.write_type.clone(),
+                                user_modified: fc.user_modified,
+                                ops: fc.ops,
+                                added: fc.added,
+                                removed: fc.removed,
+                            })
+                            .collect(),
+                    }
                 })
-                .collect(),
+                .collect();
+            // Sesiones: más reciente primero (last_activity desc; None al final).
+            sessions.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+            RepoOut {
+                cwd: cwd.clone(),
+                git_branch: repo.git_branch.clone(),
+                sessions,
+            }
         })
         .collect();
 
+    // Repos: por la actividad de su sesión más reciente (desc).
+    repos_out.sort_by(|a, b| {
+        let ka = a.sessions.first().and_then(|s| s.last_activity.clone());
+        let kb = b.sessions.first().and_then(|s| s.last_activity.clone());
+        kb.cmp(&ka)
+    });
+
     ReportOut {
         projects_dir: projects_dir.to_string(),
-        repo_count: repos.len(),
+        repo_count: repos_out.len(),
         repos: repos_out,
     }
 }
@@ -419,16 +500,15 @@ fn run_content(cli: &Cli, projects_dir: &str) -> Result<()> {
 fn render_terminal(
     projects_dir: &str,
     repos: &BTreeMap<String, Repo>,
+    metas: &BTreeMap<String, SessionMeta>,
     jsonl_files: usize,
     lines_total: usize,
     lines_skipped: usize,
     list_only: bool,
 ) {
+    println!("{BOLD}arrow{RESET} {DIM}· fuente: {projects_dir}{RESET}");
     println!(
-        "{BOLD}arrow{RESET} {DIM}· fuente: {projects_dir}{RESET}",
-    );
-    println!(
-        "{DIM}{jsonl_files} transcripts · {lines_total} records · {lines_skipped} líneas ignoradas (parsing defensivo){RESET}",
+        "{DIM}{jsonl_files} sesiones · {lines_total} records · {lines_skipped} líneas ignoradas (parsing defensivo){RESET}",
     );
 
     if repos.is_empty() {
@@ -442,13 +522,17 @@ fn render_terminal(
 
         for (sid, sess) in &repo.sessions {
             let short: String = sid.chars().take(8).collect();
+            let title = metas
+                .get(sid)
+                .and_then(|m| m.title.as_deref())
+                .unwrap_or("(sin título)");
             let (mut add, mut rem) = (0usize, 0usize);
             for fc in sess.files.values() {
                 add += fc.added;
                 rem += fc.removed;
             }
             println!(
-                "  {BOLD}sesión {short}{RESET}  {DIM}· {} archivo(s) · {GREEN}+{add}{RESET}{DIM} {RED}-{rem}{RESET}",
+                "  {BOLD}{title}{RESET} {DIM}{short} · {} archivo(s) · {GREEN}+{add}{RESET}{DIM} {RED}-{rem}{RESET}",
                 sess.files.len()
             );
 

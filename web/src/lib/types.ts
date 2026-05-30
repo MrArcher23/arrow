@@ -9,11 +9,15 @@ export interface Report {
 export interface Repo {
   cwd: string
   gitBranch: string | null
-  sessions: Session[]
+  sessions: Session[] // ordenadas por última actividad (más reciente primero)
 }
 
 export interface Session {
   sessionId: string
+  title: string | null // ai-title generado por Claude
+  lastPrompt: string | null
+  firstActivity: string | null // ISO 8601
+  lastActivity: string | null // ISO 8601
   fileCount: number
   files: FileChange[]
 }
@@ -25,15 +29,6 @@ export interface FileChange {
   ops: number
   added: number
   removed: number
-  hunks: Hunk[]
-}
-
-export interface Hunk {
-  oldStart: number
-  oldLines: number
-  newStart: number
-  newLines: number
-  lines: string[]
 }
 
 export interface FileContent {

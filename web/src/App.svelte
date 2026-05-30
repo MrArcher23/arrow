@@ -3,6 +3,7 @@
   import Sidebar from './components/Sidebar.svelte'
   import DiffView from './components/DiffView.svelte'
   import { loadReport, loadContent } from './lib/api'
+  import { isLive } from './lib/time'
   import type { Report, FileContent } from './lib/types'
 
   let report = $state<Report | null>(null)
@@ -11,9 +12,17 @@
   let loadingContent = $state(false)
   let selected = $state<{ session: string; path: string } | null>(null)
 
+  let liveCount = $derived(
+    report ? report.repos.filter((r) => isLive(r.sessions[0]?.lastActivity)).length : 0
+  )
+
   onMount(async () => {
     try {
       report = await loadReport()
+      // Foco automático en la sesión más reciente (repos ya vienen ordenados).
+      const s = report.repos[0]?.sessions[0]
+      const f = s?.files[0]
+      if (s && f) select(s.sessionId, f.path)
     } catch (e) {
       error = String(e)
     }
@@ -37,7 +46,10 @@
   <header class="topbar">
     <span class="brand">arrow</span>
     <span class="subtitle">auditoría de cambios de Claude Code</span>
-    {#if report}<span class="meta">{report.repoCount} repos</span>{/if}
+    <span class="meta">
+      {#if liveCount > 0}<span class="live">● {liveCount} en vivo</span>{/if}
+      {#if report}<span class="repos">{report.repoCount} repos</span>{/if}
+    </span>
   </header>
 
   <div class="layout">
@@ -48,7 +60,7 @@
       {#if report}
         <Sidebar {report} {selected} onSelect={select} />
       {:else if !error}
-        <div class="loading">Cargando repos…</div>
+        <div class="loading">Cargando sesiones…</div>
       {/if}
     </aside>
 
@@ -93,8 +105,15 @@
   }
   .meta {
     margin-left: auto;
-    color: var(--dim);
+    display: flex;
+    gap: 12px;
     font-size: 12px;
+  }
+  .live {
+    color: var(--green);
+  }
+  .repos {
+    color: var(--dim);
   }
   .layout {
     display: flex;
@@ -102,7 +121,7 @@
     min-height: 0;
   }
   .sidebar {
-    width: 320px;
+    width: 340px;
     flex: none;
     border-right: 1px solid var(--border);
     background: var(--panel);
