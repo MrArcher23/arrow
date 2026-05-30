@@ -44,6 +44,19 @@
     const parts = p.split('/').filter(Boolean)
     return parts[parts.length - 1] || p
   }
+  // Carpeta del archivo relativa a la raíz del repo (sin el nombre del archivo).
+  function relDir(path: string, root: string): string {
+    let p = path
+    if (root && p.startsWith(root)) p = p.slice(root.length).replace(/^\/+/, '')
+    const i = p.lastIndexOf('/')
+    return i >= 0 ? p.slice(0, i) : ''
+  }
+  // Compacta a las últimas 2 carpetas: web/src/components -> …/src/components
+  function shortDir(dir: string): string {
+    if (!dir) return ''
+    const parts = dir.split('/').filter(Boolean)
+    return parts.length <= 2 ? parts.join('/') : '…/' + parts.slice(-2).join('/')
+  }
   function titleOf(s: Session): string {
     return s.title || (s.lastPrompt ? s.lastPrompt.slice(0, 60) : '') || s.sessionId.slice(0, 8)
   }
@@ -61,7 +74,8 @@
   }
 </script>
 
-{#snippet fileRow(sessionId: string, f: any, deep: boolean)}
+{#snippet fileRow(sessionId: string, f: any, deep: boolean, root: string)}
+  {@const dir = shortDir(relDir(f.path, root))}
   <button
     class="row file"
     class:deep
@@ -70,6 +84,7 @@
     title={f.path}
   >
     <span class="fname">{basename(f.path)}</span>
+    {#if dir}<span class="fdir">{dir}</span>{/if}
     <span class="stats"><span class="add">+{f.added}</span><span class="del">-{f.removed}</span></span>
     {#if f.userModified}<span class="flag" title="Modificado fuera de Claude">⚠</span>{/if}
   </button>
@@ -95,7 +110,7 @@
           <span class="time">{relative(current.lastActivity)}</span>
         </div>
         {#each current.files as f}
-          {@render fileRow(current.sessionId, f, false)}
+          {@render fileRow(current.sessionId, f, false, repo.cwd)}
         {/each}
       {/if}
 
@@ -123,7 +138,7 @@
                 </button>
                 {#if openSess[skey]}
                   {#each s.files as f}
-                    {@render fileRow(s.sessionId, f, true)}
+                    {@render fileRow(s.sessionId, f, true, repo.cwd)}
                   {/each}
                 {/if}
               {/each}
@@ -254,9 +269,21 @@
     background: var(--active);
   }
   .fname {
+    flex: 0 1 auto;
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .fdir {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 10px;
+    color: var(--dim);
+    opacity: 0.6;
   }
   .stats {
     margin-left: auto;
