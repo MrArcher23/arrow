@@ -23,15 +23,29 @@
     localStorage.setItem('arrow.theme', theme)
   })
 
-  onMount(async () => {
+  let lastJson = ''
+  async function refresh(initial: boolean) {
     try {
-      report = await loadReport()
-      const s = report.repos[0]?.sessions[0]
-      const f = s?.files[0]
-      if (s && f) select(s.sessionId, f.path)
+      const r = await loadReport()
+      const txt = JSON.stringify(r)
+      if (txt === lastJson) return // nada cambió: no re-renderizar
+      lastJson = txt
+      report = r
+      if (initial) {
+        // Solo en la primera carga auto-seleccionamos; los refrescos NO roban foco.
+        const s = r.repos[0]?.sessions[0]
+        const f = s?.files[0]
+        if (s && f) select(s.sessionId, f.path)
+      }
     } catch (e) {
       error = String(e)
     }
+  }
+
+  onMount(() => {
+    refresh(true)
+    const id = setInterval(() => refresh(false), 5000) // auto-refresco "en vivo"
+    return () => clearInterval(id)
   })
 
   async function select(session: string, path: string) {

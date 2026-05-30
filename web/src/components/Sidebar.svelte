@@ -14,14 +14,27 @@
   let focusRepos = $derived(liveRepos.length ? liveRepos : report.repos.slice(0, 1))
   let otherRepos = $derived(report.repos.filter((r) => !focusRepos.includes(r)))
 
-  function initRepos() {
+  function liveDefaults() {
     const o: Record<string, boolean> = {}
     const live = report.repos.filter((r) => isLive(r.sessions[0]?.lastActivity))
     const focus = live.length ? live : report.repos.slice(0, 1)
     for (const r of focus) o[r.cwd] = true
     return o
   }
-  let openRepos = $state<Record<string, boolean>>(initRepos())
+  let openRepos = $state<Record<string, boolean>>(liveDefaults())
+
+  // Tras un refresco, auto-expandir repos en vivo nuevos sin pisar los toggles del usuario.
+  $effect(() => {
+    let changed = false
+    const next = { ...openRepos }
+    for (const r of report.repos) {
+      if (isLive(r.sessions[0]?.lastActivity) && !(r.cwd in next)) {
+        next[r.cwd] = true
+        changed = true
+      }
+    }
+    if (changed) openRepos = next
+  })
   let openOthers = $state(false)
   let openHist = $state<Record<string, boolean>>({})
   let openBucket = $state<Record<string, boolean>>({})

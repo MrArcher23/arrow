@@ -18,10 +18,10 @@
 //! Límite honesto: solo captura lo que pasa por Edit/Write/MultiEdit. Cambios vía
 //! comandos Bash (sed, prettier, build, mv, rm) NO aparecen aquí.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
@@ -190,6 +190,7 @@ fn main() -> Result<()> {
     let projects_path = Path::new(&projects_dir);
     let mut repos: BTreeMap<String, Repo> = BTreeMap::new();
     let mut metas: BTreeMap<String, SessionMeta> = BTreeMap::new();
+    let mut roots: HashMap<String, String> = HashMap::new(); // cache cwd -> raíz git
     let mut jsonl_files = 0usize;
     let mut lines_total = 0usize;
     let mut lines_skipped = 0usize;
@@ -219,7 +220,7 @@ fn main() -> Result<()> {
             }
             lines_total += 1;
             match serde_json::from_str::<Value>(&line) {
-                Ok(v) => ingest(&v, &cli, &mut repos, &mut metas),
+                Ok(v) => ingest(&v, &cli, &mut repos, &mut metas, &mut roots),
                 Err(_) => lines_skipped += 1, // parsing defensivo: formato no documentado
             }
         }
@@ -250,6 +251,7 @@ fn ingest(
     cli: &Cli,
     repos: &mut BTreeMap<String, Repo>,
     metas: &mut BTreeMap<String, SessionMeta>,
+    roots: &mut HashMap<String, String>,
 ) {
     // --- metadatos: cualquier record con sessionId ---
     if let Some(sid) = v.get("sessionId").and_then(Value::as_str) {
@@ -321,7 +323,8 @@ fn ingest(
         }
     }
 
-    let repo = repos.entry(cwd).or_default();
+    let repo_key = git_root(&cwd, roots);
+    let repo = repos.entry(repo_key).or_default();
     if repo.git_branch.is_none() {
         repo.git_branch = branch;
     }
@@ -419,6 +422,28 @@ fn build_report(
         repo_count: repos_out.len(),
         repos: repos_out,
     }
+}
+
+/// Resuelve la raíz del repo git que contiene `cwd` (sube buscando `.git`).
+/// Así un cwd que derivó a un subdirectorio (p.ej. .../arrow/web) se agrupa con
+/// su repo (.../arrow). Si no hay `.git`, usa el propio cwd. Cachea por cwd.
+fn git_root(cwd: &str, cache: &mut HashMap<String, String>) -> String {
+    if let Some(r) = cache.get(cwd) {
+        return r.clone();
+    }
+    let mut dir = PathBuf::from(cwd);
+    let mut root = cwd.to_string();
+    loop {
+        if dir.join(".git").exists() {
+            root = dir.to_string_lossy().into_owned();
+            break;
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    cache.insert(cwd.to_string(), root.clone());
+    root
 }
 
 /// Reúne el "antes" (primer `originalFile` de la sesión para ese archivo) y el
