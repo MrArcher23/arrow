@@ -188,6 +188,9 @@ fn main() -> Result<()> {
     }
 
     let projects_path = Path::new(&projects_dir);
+    // Solo se filtra el ALMACÉN GLOBAL de Claude (~/.claude/), no cualquier carpeta
+    // .claude/: un `.claude/` dentro de un repo (settings, skills…) SÍ es tu código.
+    let claude_home = format!("{home}/.claude/");
     let mut repos: BTreeMap<String, Repo> = BTreeMap::new();
     let mut metas: BTreeMap<String, SessionMeta> = BTreeMap::new();
     let mut roots: HashMap<String, String> = HashMap::new(); // cache cwd -> raíz git
@@ -220,7 +223,7 @@ fn main() -> Result<()> {
             }
             lines_total += 1;
             match serde_json::from_str::<Value>(&line) {
-                Ok(v) => ingest(&v, &cli, &mut repos, &mut metas, &mut roots),
+                Ok(v) => ingest(&v, &cli, &mut repos, &mut metas, &mut roots, &claude_home),
                 Err(_) => lines_skipped += 1, // parsing defensivo: formato no documentado
             }
         }
@@ -252,6 +255,7 @@ fn ingest(
     repos: &mut BTreeMap<String, Repo>,
     metas: &mut BTreeMap<String, SessionMeta>,
     roots: &mut HashMap<String, String>,
+    claude_home: &str,
 ) {
     // --- metadatos: cualquier record con sessionId ---
     if let Some(sid) = v.get("sessionId").and_then(Value::as_str) {
@@ -296,8 +300,10 @@ fn ingest(
         Some(s) => s.to_string(),
         None => return,
     };
-    // Archivos internos de Claude (memoria, historial…) NO son cambios de tu código.
-    if file_path.contains("/.claude/") {
+    // Almacén global de Claude (memoria, historial…) NO es tu código. Pero un
+    // `.claude/` DENTRO de un repo (settings, skills) sí: por eso filtramos por el
+    // prefijo del HOME, no por la subcadena "/.claude/".
+    if file_path.starts_with(claude_home) {
         return;
     }
     let cwd = v
