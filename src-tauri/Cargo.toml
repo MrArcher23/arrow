@@ -33,3 +33,14 @@ default = []
 # `arrow` y nunca arrastra el backend Tauri (que necesita libwebkit2gtk). El parser
 # se reutiliza vía la dependencia path `arrow = { path = ".." }`, sin duplicar lógica.
 [workspace]
+
+# Build de release optimizado para tamaño (la app se distribuye como .deb/AppImage).
+# `strip` quita los símbolos de debug (el grueso del binario sin optimizar); `lto` +
+# `codegen-units=1` reducen tamaño y mejoran inlining a cambio de un build más lento;
+# `opt-level="s"` prioriza tamaño (el cuello de botella del parser es IO, no CPU).
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

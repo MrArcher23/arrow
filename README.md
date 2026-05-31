@@ -129,6 +129,9 @@ duplicada; la misma fuente de verdad para terminal, web y app nativa.
       timeline point-in-time reusando `file-history`.
 - [ ] **Fase 4** (postergado) — edición real con guardado a disco, integración GitHub (PRs/commits).
 
+Seguimiento operativo, deuda técnica y backlog de ideas (búsqueda, stats, export, atajos):
+ver [ROADMAP.md](ROADMAP.md).
+
 ## Stack
 
 Rust (parser/backend) · CodeMirror 6 (UI, Fase 1+) · Tauri 2.x (empaquetado, Fase 2+).

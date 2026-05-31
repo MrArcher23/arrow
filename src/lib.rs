@@ -556,3 +556,325 @@ fn git_root(cwd: &str, cache: &mut HashMap<String, String>) -> String {
     cache.insert(cwd.to_string(), root.clone());
     root
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+//
+// Verifican el comportamiento NO obvio documentado en CLAUDE.md/README contra
+// transcripts-fixture escritos en un directorio temporal (no tocan ~/.claude
+// real). Complementan a `/verify-parser` (que corre contra datos reales): estos
+// blindan el parser ante regresiones cuando se extienda el formato.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // Directorio temporal único por test (contador atómico evita colisiones
+    // entre tests que corren en paralelo). Se limpia al entrar para idempotencia.
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    fn tmpdir(tag: &str) -> PathBuf {
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut d = std::env::temp_dir();
+        d.push(format!("arrow_test_{tag}_{n}"));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    // Escribe un transcript de PRIMER NIVEL: <projects>/<projsubdir>/<sid>.jsonl
+    fn write_top_level(projects: &Path, projsubdir: &str, sid: &str, records: &[String]) {
+        let dir = projects.join(projsubdir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{sid}.jsonl")), records.join("\n")).unwrap();
+    }
+
+    // Record de edición (toolUseResult con filePath + structuredPatch).
+    fn edit_record(
+        sid: &str,
+        cwd: &str,
+        file_path: &str,
+        ts: &str,
+        original: &str,
+        patch_lines: &[&str],
+    ) -> String {
+        json!({
+            "type": "user",
+            "sessionId": sid,
+            "cwd": cwd,
+            "gitBranch": "main",
+            "timestamp": ts,
+            "toolUseResult": {
+                "filePath": file_path,
+                "type": "update",
+                "userModified": false,
+                "originalFile": original,
+                "structuredPatch": [{
+                    "oldStart": 1, "oldLines": 1, "newStart": 1, "newLines": patch_lines.len(),
+                    "lines": patch_lines,
+                }],
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn parsing_defensivo_ignora_lineas_invalidas() {
+        let dir = tmpdir("defensivo");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("a.txt");
+        fs::write(&file, "after\n").unwrap();
+
+        let records = vec![
+            "esto no es json".to_string(),
+            "{ json roto".to_string(),
+            String::new(), // línea vacía: se salta sin contar
+            edit_record(
+                "s1",
+                repo.to_str().unwrap(),
+                file.to_str().unwrap(),
+                "2026-01-01T00:00:00Z",
+                "before\n",
+                &["-before", "+after"],
+            ),
+        ];
+        write_top_level(&dir, "proj", "s1", &records);
+
+        let c = collect(dir.to_str().unwrap(), None, None);
+        // Las dos líneas inválidas se cuentan como skipped, NO rompen el parseo.
+        assert_eq!(c.lines_skipped, 2, "deben ignorarse las 2 líneas inválidas");
+        // El record válido sí se ingirió.
+        assert_eq!(c.repos.len(), 1, "el record válido debe producir 1 repo");
+    }
+
+    #[test]
+    fn solo_transcripts_de_primer_nivel() {
+        let dir = tmpdir("toplevel");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("a.txt");
+        fs::write(&file, "x\n").unwrap();
+        let rec = edit_record(
+            "s1",
+            repo.to_str().unwrap(),
+            file.to_str().unwrap(),
+            "2026-01-01T00:00:00Z",
+            "",
+            &["+x"],
+        );
+        // Top-level: cuenta.
+        write_top_level(&dir, "proj", "s1", &[rec.clone()]);
+        // Anidado (subagente): <projects>/proj/nested/s2.jsonl → 3 componentes, se ignora.
+        let nested = dir.join("proj").join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("s2.jsonl"), &rec).unwrap();
+
+        let c = collect(dir.to_str().unwrap(), None, None);
+        assert_eq!(c.jsonl_files, 1, "solo el transcript de primer nivel cuenta");
+    }
+
+    #[test]
+    fn agrupa_por_raiz_git() {
+        let dir = tmpdir("gitroot");
+        let repo = dir.join("myrepo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let sub = repo.join("web");
+        fs::create_dir_all(&sub).unwrap();
+        let file = sub.join("App.svelte");
+        fs::write(&file, "x\n").unwrap();
+        // cwd es el subdirectorio web/, pero el repo es la raíz git (myrepo).
+        let rec = edit_record(
+            "s1",
+            sub.to_str().unwrap(),
+            file.to_str().unwrap(),
+            "2026-01-01T00:00:00Z",
+            "",
+            &["+x"],
+        );
+        write_top_level(&dir, "proj", "s1", &[rec]);
+
+        let c = collect(dir.to_str().unwrap(), None, None);
+        let keys: Vec<&String> = c.repos.keys().collect();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(
+            keys[0],
+            &repo.to_string_lossy(),
+            "el cwd en web/ debe agruparse bajo la raíz git myrepo"
+        );
+    }
+
+    #[test]
+    fn cuenta_added_y_removed() {
+        let dir = tmpdir("addremoved");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("a.txt");
+        fs::write(&file, "x\n").unwrap();
+        // 2 añadidas, 1 borrada (el contexto " ctx" no cuenta).
+        let rec = edit_record(
+            "s1",
+            repo.to_str().unwrap(),
+            file.to_str().unwrap(),
+            "2026-01-01T00:00:00Z",
+            "old\n",
+            &["-old", "+new1", "+new2", " ctx"],
+        );
+        write_top_level(&dir, "proj", "s1", &[rec]);
+
+        let report = build_report(dir.to_str().unwrap());
+        let f = &report.repos[0].sessions[0].files[0];
+        assert_eq!(f.added, 2);
+        assert_eq!(f.removed, 1);
+    }
+
+    #[test]
+    fn filtra_solo_el_home_global_de_claude() {
+        let dir = tmpdir("claudefilter");
+        let home = std::env::var("HOME").unwrap();
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+
+        // (a) filePath dentro del HOME global ~/.claude/: NO es código del usuario.
+        let claude_file = format!("{home}/.claude/projects/internal.jsonl");
+        // (b) filePath en un .claude/ DENTRO del repo: SÍ es código del usuario.
+        let repo_claude = repo.join(".claude").join("settings.json");
+
+        let recs = vec![
+            edit_record(
+                "s1",
+                repo.to_str().unwrap(),
+                &claude_file,
+                "2026-01-01T00:00:00Z",
+                "",
+                &["+x"],
+            ),
+            edit_record(
+                "s1",
+                repo.to_str().unwrap(),
+                repo_claude.to_str().unwrap(),
+                "2026-01-01T00:00:01Z",
+                "",
+                &["+y"],
+            ),
+        ];
+        write_top_level(&dir, "proj", "s1", &recs);
+
+        let c = collect(dir.to_str().unwrap(), None, None);
+        let files: Vec<&String> = c
+            .repos
+            .values()
+            .flat_map(|r| r.sessions.values())
+            .flat_map(|s| s.files.keys())
+            .collect();
+        assert!(
+            !files.iter().any(|p| p.starts_with(&format!("{home}/.claude/"))),
+            "el HOME global ~/.claude/ debe filtrarse"
+        );
+        assert!(
+            files.iter().any(|p| p.ends_with(".claude/settings.json")),
+            "un .claude/ dentro del repo SÍ debe aparecer"
+        );
+    }
+
+    #[test]
+    fn repos_ordenados_por_recencia() {
+        let dir = tmpdir("recencia");
+        // Dos repos con git root distinto; el de timestamp mayor va primero.
+        for (name, ts) in [("viejo", "2026-01-01T00:00:00Z"), ("nuevo", "2026-06-01T00:00:00Z")] {
+            let repo = dir.join(name);
+            fs::create_dir_all(repo.join(".git")).unwrap();
+            let file = repo.join("a.txt");
+            fs::write(&file, "x\n").unwrap();
+            let rec = edit_record(
+                name,
+                repo.to_str().unwrap(),
+                file.to_str().unwrap(),
+                ts,
+                "",
+                &["+x"],
+            );
+            write_top_level(&dir, name, name, &[rec]);
+        }
+        let report = build_report(dir.to_str().unwrap());
+        assert_eq!(report.repo_count, 2);
+        assert!(
+            report.repos[0].cwd.ends_with("nuevo"),
+            "el repo con actividad más reciente debe ir primero"
+        );
+    }
+
+    #[test]
+    fn metadata_titulo_se_asocia_a_la_sesion() {
+        let dir = tmpdir("titulo");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("a.txt");
+        fs::write(&file, "x\n").unwrap();
+        let title_rec = json!({
+            "type": "ai-title", "sessionId": "s1", "aiTitle": "Mi título legible",
+            "timestamp": "2026-01-01T00:00:00Z"
+        })
+        .to_string();
+        let edit = edit_record(
+            "s1",
+            repo.to_str().unwrap(),
+            file.to_str().unwrap(),
+            "2026-01-01T00:00:01Z",
+            "",
+            &["+x"],
+        );
+        write_top_level(&dir, "proj", "s1", &[title_rec, edit]);
+
+        let report = build_report(dir.to_str().unwrap());
+        assert_eq!(
+            report.repos[0].sessions[0].title.as_deref(),
+            Some("Mi título legible")
+        );
+    }
+
+    #[test]
+    fn file_content_before_after_y_atajo_por_sesion() {
+        let dir = tmpdir("content");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("a.txt");
+        fs::write(&file, "AFTER en disco\n").unwrap();
+        let fp = file.to_str().unwrap();
+
+        // Dos sesiones tocan el mismo archivo con originalFile distinto.
+        write_top_level(
+            &dir,
+            "proj",
+            "sessA",
+            &[edit_record("sessA", repo.to_str().unwrap(), fp, "2026-01-01T00:00:00Z", "BEFORE de A\n", &["+x"])],
+        );
+        write_top_level(
+            &dir,
+            "proj",
+            "sessB",
+            &[edit_record("sessB", repo.to_str().unwrap(), fp, "2026-02-01T00:00:00Z", "BEFORE de B\n", &["+y"])],
+        );
+
+        // Con filtro de sesión: before es el de ESA sesión; after viene del disco.
+        let out = file_content(dir.to_str().unwrap(), fp, Some("sessB"));
+        assert_eq!(out.before, "BEFORE de B\n");
+        assert!(out.before_available);
+        assert_eq!(out.after, "AFTER en disco\n");
+        assert!(out.after_available);
+        assert_eq!(out.ops, 1, "solo la sesión filtrada aporta ops");
+    }
+
+    #[test]
+    fn file_content_archivo_inexistente_degrada_sin_romper() {
+        let dir = tmpdir("noafter");
+        // No hay transcripts ni archivo en disco: debe degradar, no paniquear.
+        let out = file_content(dir.to_str().unwrap(), "/ruta/que/no/existe.txt", None);
+        assert!(!out.before_available);
+        assert!(!out.after_available);
+        assert_eq!(out.ops, 0);
+        assert_eq!(out.after, "");
+    }
+}

@@ -1,7 +1,8 @@
 # arrow — visor de auditoría de Claude Code
 
 App de escritorio que audita **qué archivos tocó Claude Code**:
-`repo → sesión → archivos → diff`, **sin chat con IA**. Ver @README.md para overview y roadmap.
+`repo → sesión → archivos → diff`, **sin chat con IA**. Ver @README.md para overview y roadmap,
+y @ROADMAP.md para seguimiento operativo, deuda técnica y backlog de ideas.
 
 Stack: parser en **Rust** como **librería** (`src/lib.rs`) consumida por la CLI (`src/main.rs`) y
 por el backend de Tauri (`src-tauri/`); UI web **Svelte 5 + Vite + CodeMirror 6** (`web/`),

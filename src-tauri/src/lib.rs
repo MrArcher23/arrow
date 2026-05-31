@@ -10,7 +10,7 @@
 //! evento `report-changed` (con debounce) al frontend.
 
 use std::path::Path;
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::time::Duration;
 
 use arrow::{ContentOut, ReportOut};
@@ -37,35 +37,66 @@ fn content(file: String, session: Option<String>) -> ContentOut {
 
 /// Watcher nativo: vigila `~/.claude/projects` y, con debounce, emite
 /// `report-changed` para que el frontend refresque sin polling.
+///
+/// Resiliente al ciclo de vida del directorio: si `~/.claude/projects` aún no
+/// existe (instalación nueva) o se borra y se recrea, el watcher reintenta
+/// establecerse cada `RETRY` en vez de rendirse para siempre. El polling lento
+/// del frontend (App.svelte) es el respaldo último si el watcher fallara.
 fn spawn_watcher(app: AppHandle) {
+    const RETRY: Duration = Duration::from_secs(5);
+    const DEBOUNCE: Duration = Duration::from_millis(400);
+    const REVALIDATE: Duration = Duration::from_secs(30);
+
     let dir = projects_dir();
     std::thread::spawn(move || {
-        let (tx, rx) = channel();
-        let mut watcher =
-            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                if res.is_ok() {
-                    let _ = tx.send(());
-                }
-            }) {
-                Ok(w) => w,
-                Err(_) => return,
-            };
-        // RecursiveMode: los transcripts viven en subdirectorios por proyecto.
-        if watcher
-            .watch(Path::new(&dir), RecursiveMode::Recursive)
-            .is_err()
-        {
-            return; // el directorio aún no existe: sin watcher (el polling del front cubre)
-        }
-        // El `watcher` se mantiene vivo mientras dure este hilo (loop infinito).
-        loop {
-            // Bloquea hasta la primera actividad…
-            if rx.recv().is_err() {
-                return; // canal cerrado: la app terminó
+        // Bucle externo: (re)establecer el watch. `continue 'establish` suelta el
+        // watcher actual y vuelve a empezar (p.ej. tras borrarse el directorio).
+        'establish: loop {
+            if !Path::new(&dir).exists() {
+                std::thread::sleep(RETRY); // aún no existe: reintenta más tarde
+                continue;
             }
-            // …y luego drena ráfagas: emite una sola vez tras 400ms de calma.
-            while rx.recv_timeout(Duration::from_millis(400)).is_ok() {}
-            let _ = app.emit("report-changed", ());
+            let (tx, rx) = channel();
+            let mut watcher =
+                match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                    if res.is_ok() {
+                        let _ = tx.send(());
+                    }
+                }) {
+                    Ok(w) => w,
+                    Err(_) => {
+                        std::thread::sleep(RETRY);
+                        continue;
+                    }
+                };
+            // RecursiveMode: los transcripts viven en subdirectorios por proyecto.
+            if watcher
+                .watch(Path::new(&dir), RecursiveMode::Recursive)
+                .is_err()
+            {
+                std::thread::sleep(RETRY);
+                continue;
+            }
+            // Armado. El `watcher` se mantiene vivo en este scope mientras dure el
+            // bucle interno; al hacer `continue 'establish` se libera y se re-crea.
+            loop {
+                match rx.recv_timeout(REVALIDATE) {
+                    Ok(()) => {
+                        // Drena ráfagas: emite una sola vez tras DEBOUNCE de calma.
+                        while rx.recv_timeout(DEBOUNCE).is_ok() {}
+                        let _ = app.emit("report-changed", ());
+                    }
+                    // Idle: revalida que el directorio siga existiendo (inotify
+                    // pierde el watch si el dir se borra y recrea sin avisar).
+                    Err(RecvTimeoutError::Timeout) => {
+                        if !Path::new(&dir).exists() {
+                            continue 'establish; // se borró: re-establecer al volver
+                        }
+                    }
+                    // El watcher se cayó (canal cerrado): re-establecer.
+                    Err(RecvTimeoutError::Disconnected) => continue 'establish,
+                }
+            }
         }
     });
 }
