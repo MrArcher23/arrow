@@ -5,7 +5,7 @@ Archivo de seguimiento entre sesiones. El **roadmap canónico de fases** vive en
 backlog de ideas que aún no están comprometidas a ninguna fase. Las **convenciones** del proyecto
 están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 
-> Última actualización: 2026-05-30 (cierre de Fase 2 + pulido + mejoras visuales: zoom y titlebar custom).
+> Última actualización: 2026-05-30 (Fase 2 + pulido + mejoras visuales: zoom, titlebar custom, y foco por sesión activa).
 
 ## Estado actual
 
@@ -49,6 +49,17 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
   raíz → buscaba `web/web/package.json` y `cargo tauri dev` fallaba. Corregidos a `npm run dev` /
   `npm run build` (sin `--prefix`); nota de CLAUDE.md actualizada. ✅ Verificado: `cargo tauri dev`
   levanta la ventana y `cargo tauri build` genera `.deb` (2.0M) + AppImage (77M).
+- **Foco = sesión activa** (rediseño de la semántica `live`, resuelve la deuda de abajo): el sidebar
+  muestra arriba los repos de la **sesión activa** (actividad más reciente) + ráfaga de ~10 min
+  (`BURST_WINDOW`), en vez de "todos los repos con actividad <20 min" — así un repo de una sesión
+  anterior deja de quedar "pegado" arriba. **Punto verde** como único indicador (solo en repos del
+  foco con actividad reciente); se quitó el badge de texto `● live`. Lógica única en
+  `web/src/lib/time.ts` (`focusRepos()`), reusada por `Sidebar.svelte` y la topbar de `App.svelte`
+  (antes el cálculo `isLive` estaba duplicado en 4 sitios). Verificado contra datos reales. Detalle de
+  honestidad: "sesión activa" = actividad más reciente en disco, NO proceso en ejecución; el foco se
+  ancla al timestamp del dato (no al reloj). Nota del modelo: una sesión (mismo `sessionId`) vive en
+  UN repo (raíz git del cwd), así que el foco son ≥1 repo según cuántas sesiones recientes haya en la
+  ráfaga, no "una sesión tocando varios repos".
 
 ## Backlog de ideas (sin comprometer fase)
 
@@ -69,9 +80,11 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
 
 ## Deuda técnica / notas
 
-- **Semántica del badge `live`**: hoy es "actividad reciente" (<20 min), no "sesión en ejecución".
-  Decisión de diseño pendiente documentada en [SPEC.md](SPEC.md) (sección del watcher) — se aborda
-  al avanzar Fase 3.
+- **Semántica del badge `live`** — ✅ resuelto (post-Fase 2; ver "Mejoras visuales / UX"). El foco del
+  sidebar pasó de "todos los repos con actividad <20 min" a "los de la **sesión activa** (actividad más
+  reciente) + ráfaga ~10 min"; el **punto verde** quedó como único indicador (se quitó el badge de
+  texto `live`). Sigue honesto: "activa" = actividad más reciente en disco, no proceso vivo. Bonus: el
+  foco se ancla al **dato** (no al reloj), así que no sufre el congelamiento de tiempo relativo (abajo).
 - **Tiempo relativo congelado**: `relative()`/`isLive()` solo se recalculan al re-render; si el
   report no cambia, el "Nm ago" no avanza. Un tick de reloj independiente lo resolvería (también
   anotado en SPEC.md).

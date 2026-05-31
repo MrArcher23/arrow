@@ -1,16 +1,37 @@
-// Utilidades de tiempo: "en vivo", tiempo relativo y buckets de fecha para el historial.
-// (Los strings devueltos son texto de UI -> en inglés.)
+// Utilidades de tiempo: "en vivo", foco de la sesión activa, tiempo relativo y buckets
+// de fecha para el historial. (Los strings devueltos son texto de UI -> en inglés.)
+import type { Repo } from './types'
 
 const MIN = 60_000
 const HOUR = 3_600_000
 const DAY = 86_400_000
 const LIVE_WINDOW = 20 * MIN
+// Ventana de "ráfaga": un repo entra al foco si su última actividad cae dentro de estos
+// minutos respecto a la de la sesión activa (la más reciente). Anclada al DATO, no al
+// reloj, así el foco no envejece solo entre refrescos.
+const BURST_WINDOW = 10 * MIN
 
 export function isLive(iso?: string | null): boolean {
   if (!iso) return false
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return false
   return Date.now() - t < LIVE_WINDOW
+}
+
+// Repos en foco: el de la sesión activa (actividad globalmente más reciente, = repos[0]
+// por el orden que ya garantiza el parser) + cualquier repo tocado dentro de BURST_WINDOW
+// de esa actividad (trabajo en la misma ráfaga). Siempre devuelve ≥1 repo (el más reciente)
+// como fallback de navegación. Devuelve REFERENCIAS del array original (no copias) para que
+// el complemento `otherRepos` por identidad de objeto siga funcionando.
+export function focusRepos(repos: Repo[]): Repo[] {
+  const top = repos[0]?.sessions[0]?.lastActivity
+  const t0 = top ? Date.parse(top) : NaN
+  if (Number.isNaN(t0)) return repos.slice(0, 1)
+  return repos.filter((r) => {
+    const la = r.sessions[0]?.lastActivity
+    const t = la ? Date.parse(la) : NaN
+    return !Number.isNaN(t) && t0 - t <= BURST_WINDOW
+  })
 }
 
 export function relative(iso?: string | null): string {

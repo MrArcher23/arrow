@@ -101,8 +101,13 @@ cargo tauri build
   corre standalone, leyendo `~/.claude/projects` directamente desde Rust.
 - **Refresco en vivo nativo**: un watcher `notify` sobre `~/.claude/projects` emite el evento
   `report-changed` (con debounce) y la UI refresca al instante; se mantiene un polling lento como
-  fallback. (Semántica del badge `live`: sigue siendo *actividad reciente* <20 min, no *sesión en
-  curso* — un límite honesto heredado de la Fase 1.)
+  fallback.
+- **Foco por sesión activa**: arriba se muestran el/los repo(s) de la **sesión activa** (la de
+  actividad más reciente) + cualquiera tocado en la misma ráfaga (~10 min, `BURST_WINDOW` en
+  `web/src/lib/time.ts`); el resto baja a *Other repos* a medida que envejece respecto a la activa.
+  El **punto verde** marca esos repos del foco con actividad reciente (se quitó el badge de texto
+  `live`, redundante). Honesto: "sesión activa" = *actividad más reciente en disco*, no *proceso en
+  ejecución* (arrow no puede saber lo segundo).
 - **Ventana y zoom**: titlebar propia (`decorations:false`) con botones minimizar/maximizar/cerrar,
   arrastre y doble-click para maximizar — garantiza los controles *cross-distro* (en GNOME/Pop!_OS el
   WM no los pinta de forma fiable). Zoom de UI estilo VSCode con `Ctrl +/−/0`: nativo del webview
@@ -127,8 +132,8 @@ duplicada; la misma fuente de verdad para terminal, web y app nativa.
 - [x] **Fase 2** — empaquetado en **Tauri 2.x** (`.deb` + AppImage). El parser de Rust se extrajo
       a una **librería** (`src/lib.rs`) y es el backend nativo (sin sidecar); la CLI y la app lo
       comparten. Frontend dual-mode (`invoke`/`fetch`), watcher `notify` → evento `report-changed`
-      para refresco en vivo, y mitigación WebKitGTK. El badge `live` sigue siendo *actividad
-      reciente* (<20 min), no *sesión en curso* — pendiente de revisar en una fase futura.
+      para refresco en vivo, y mitigación WebKitGTK. (El foco del sidebar se refinó después a
+      "sesión activa + ráfaga ~10 min" con el punto verde como único indicador; ver ROADMAP.)
 - [ ] **Fase 3** — honestidad + git: toggle "git diff working tree", marcado de `userModified`,
       timeline point-in-time reusando `file-history`.
 - [ ] **Fase 4** (postergado) — edición real con guardado a disco, integración GitHub (PRs/commits).

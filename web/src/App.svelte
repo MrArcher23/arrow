@@ -8,7 +8,7 @@
   import { loadReport, loadContent, clearContentCache, inTauri } from './lib/api'
   import { loadZoom, applyZoom, clampZoom, ZOOM_STEP } from './lib/zoom'
   import { winToggleMaximize } from './lib/window'
-  import { isLive } from './lib/time'
+  import { isLive, focusRepos as focusReposOf } from './lib/time'
   import { DEFAULT_THEME } from './lib/themes'
   import type { Report, FileContent } from './lib/types'
 
@@ -19,8 +19,9 @@
   let selected = $state<{ session: string; path: string } | null>(null)
   let theme = $state(localStorage.getItem('arrow.theme') ?? DEFAULT_THEME)
 
+  // Repos con punto verde = los del foco (sesión activa + ráfaga) con actividad reciente.
   let liveCount = $derived(
-    report ? report.repos.filter((r) => isLive(r.sessions[0]?.lastActivity)).length : 0
+    report ? focusReposOf(report.repos).filter((r) => isLive(r.sessions[0]?.lastActivity)).length : 0
   )
 
   // Zoom de la UI (estilo VSCode/terminal): Ctrl +/−/0. El estado vive aquí (reactivo);
@@ -122,7 +123,7 @@
     <span class="brand" data-tauri-drag-region>arrow</span>
     <span class="subtitle" data-tauri-drag-region>audit of Claude Code changes</span>
     <div class="actions">
-      {#if liveCount > 0}<span class="live">● {liveCount} live</span>{/if}
+      {#if liveCount > 0}<span class="live">● {liveCount}</span>{/if}
       {#if report}<span class="repos">{report.repoCount} repos</span>{/if}
       <div class="zoom">
         <button class="zbtn" onclick={() => setZoom(zoomFactor - ZOOM_STEP)} title="Zoom out (Ctrl −)" aria-label="Zoom out">−</button>

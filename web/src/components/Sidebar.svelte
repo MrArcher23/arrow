@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Report, Repo, Session } from '../lib/types'
-  import { isLive, relative, dateBucket, BUCKET_ORDER } from '../lib/time'
+  import { isLive, focusRepos as focusReposOf, relative, dateBucket, BUCKET_ORDER } from '../lib/time'
 
   interface Props {
     report: Report
@@ -9,26 +9,25 @@
   }
   let { report, selected, onSelect }: Props = $props()
 
-  // Foco: repos en vivo (<20 min). Si ninguno, el más reciente. El resto va a "Otros repos".
-  let liveRepos = $derived(report.repos.filter((r) => isLive(r.sessions[0]?.lastActivity)))
-  let focusRepos = $derived(liveRepos.length ? liveRepos : report.repos.slice(0, 1))
+  // Foco: los repos de la sesión activa (la de actividad más reciente) + cualquiera tocado
+  // en la misma ráfaga (~10 min). El resto va a "Other repos". Lógica única en time.ts.
+  let focusRepos = $derived(focusReposOf(report.repos))
   let otherRepos = $derived(report.repos.filter((r) => !focusRepos.includes(r)))
 
-  function liveDefaults() {
+  function focusDefaults() {
     const o: Record<string, boolean> = {}
-    const live = report.repos.filter((r) => isLive(r.sessions[0]?.lastActivity))
-    const focus = live.length ? live : report.repos.slice(0, 1)
-    for (const r of focus) o[r.cwd] = true
+    for (const r of focusReposOf(report.repos)) o[r.cwd] = true
     return o
   }
-  let openRepos = $state<Record<string, boolean>>(liveDefaults())
+  let openRepos = $state<Record<string, boolean>>(focusDefaults())
 
-  // Tras un refresco, auto-expandir repos en vivo nuevos sin pisar los toggles del usuario.
+  // Tras un refresco, auto-expandir los repos del foco nuevos sin pisar los toggles del usuario.
   $effect(() => {
+    const fset = new Set(focusReposOf(report.repos).map((r) => r.cwd))
     let changed = false
     const next = { ...openRepos }
     for (const r of report.repos) {
-      if (isLive(r.sessions[0]?.lastActivity) && !(r.cwd in next)) {
+      if (fset.has(r.cwd) && !(r.cwd in next)) {
         next[r.cwd] = true
         changed = true
       }
@@ -90,10 +89,11 @@
   </button>
 {/snippet}
 
-{#snippet repoRow(repo: Repo)}
+{#snippet repoRow(repo: Repo, inFocus: boolean)}
   {@const current = repo.sessions[0]}
   {@const rest = repo.sessions.slice(1)}
-  {@const live = isLive(current?.lastActivity)}
+  <!-- Punto verde: solo en repos del foco que además tienen actividad reciente (no glow falso si es viejo). -->
+  {@const live = inFocus && isLive(current?.lastActivity)}
   <div class="repo">
     <button class="row repo-head" onclick={() => (openRepos = toggle(openRepos, repo.cwd))} title={repo.cwd}>
       <span class="chev">{openRepos[repo.cwd] ? '▾' : '▸'}</span>
@@ -105,7 +105,6 @@
     {#if openRepos[repo.cwd]}
       {#if current}
         <div class="current-head">
-          {#if live}<span class="badge">● live</span>{/if}
           <span class="stitle" title={titleOf(current)}>{titleOf(current)}</span>
           <span class="time">{relative(current.lastActivity)}</span>
         </div>
@@ -152,7 +151,7 @@
 
 <nav class="tree">
   {#each focusRepos as repo}
-    {@render repoRow(repo)}
+    {@render repoRow(repo, true)}
   {/each}
 
   {#if otherRepos.length}
@@ -164,7 +163,7 @@
     {#if openOthers}
       <div class="others">
         {#each otherRepos as repo}
-          {@render repoRow(repo)}
+          {@render repoRow(repo, false)}
         {/each}
       </div>
     {/if}
@@ -232,15 +231,6 @@
     gap: 6px;
     padding: 6px 8px 2px 22px;
     overflow: hidden;
-  }
-  .badge {
-    font-size: 9px;
-    color: var(--green);
-    border: 1px solid var(--green);
-    border-radius: 999px;
-    padding: 0 5px;
-    flex: none;
-    letter-spacing: 0.3px;
   }
   .stitle {
     font-size: 12px;
