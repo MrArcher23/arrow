@@ -103,6 +103,10 @@ cargo tauri build
   `report-changed` (con debounce) y la UI refresca al instante; se mantiene un polling lento como
   fallback. (Semántica del badge `live`: sigue siendo *actividad reciente* <20 min, no *sesión en
   curso* — un límite honesto heredado de la Fase 1.)
+- **Ventana y zoom**: titlebar propia (`decorations:false`) con botones minimizar/maximizar/cerrar,
+  arrastre y doble-click para maximizar — garantiza los controles *cross-distro* (en GNOME/Pop!_OS el
+  WM no los pinta de forma fiable). Zoom de UI estilo VSCode con `Ctrl +/−/0`: nativo del webview
+  (`setZoom`, no descoloca a CodeMirror), persistente entre sesiones.
 - **Linux/WebKitGTK**: la app fija `WEBKIT_DISABLE_DMABUF_RENDERER=1` en su `main()` (evita la
   pantalla en blanco por DMABUF/NVIDIA); el bug de `font-weight` (+100) ya está compensado en
   `web/src/app.css` (`font-weight: 350`).
