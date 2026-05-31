@@ -1,3 +1,6 @@
 /target
 web/node_modules
 web/dist
+# Tauri (Fase 2): build nativo + código generado por tauri-build.
+src-tauri/target
+src-tauri/gen

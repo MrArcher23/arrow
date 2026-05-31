@@ -81,6 +81,23 @@ Compartir el código del parser entre la CLI existente y el backend de Tauri (NO
    El frontend escucha con `@tauri-apps/api/event` `listen('report-changed', refresh)` en `App.svelte`
    (solo si `inTauri`; mantener el `setInterval` como fallback del modo navegador).
    *Aceptable para un primer corte:* dejar el polling también en Tauri y añadir el watcher después.
+   - **Semántica del badge `live` (revisar al cablear el watcher).** Hoy `isLive()`
+     (`web/src/lib/time.ts`) marca una sesión como `live` si su `lastActivity` cae en los últimos
+     20 min (`LIVE_WINDOW`), evaluado sobre `sessions[0]` (la sesión más reciente del repo). Es
+     **"actividad reciente", no "sesión en ejecución ahora"**: una sesión ya terminada conserva el
+     badge hasta ~20 min tras su última edición. Dos límites honestos del ciclo de vida a tener
+     presentes al rehacer el refresco:
+     - Una sesión **sin** ediciones (sin `toolUseResult.filePath`) **no aparece**: arrow es un visor
+       de archivos tocados, no un monitor de procesos; solo se lista al primer `Edit`/`Write`/`MultiEdit`
+       (`src/main.rs` solo crea la sesión en la rama de cambio de archivo, no con metadatos sueltos).
+     - El refresco web actual (polling 5 s en `App.svelte`) **cortocircuita el re-render** cuando el
+       report no cambia (`if (txt === lastJson) return`); como `relative()`/`isLive()` solo se
+       recalculan al re-renderizar, el `"Nm ago"` y el badge `live` se **congelan** hasta que una
+       edición mueva el report (el badge no caduca a los 20 min por sí solo).
+     Al introducir el watcher + evento `report-changed`, decidir: (a) ¿`live` sigue siendo
+     "actividad reciente" o pasa a "proceso de Claude activo" (necesitaría una señal del sistema)?;
+     (b) añadir un tick de reloj independiente para que el tiempo relativo y la caducidad de `live`
+     avancen aunque el report no cambie. El badge no debe sugerir más de lo que sabe (honestidad).
 
 ## Prerrequisitos (Linux)
 

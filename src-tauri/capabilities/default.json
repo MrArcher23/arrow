@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capacidad por defecto: la ventana principal puede invocar los comandos de la app y escuchar eventos.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

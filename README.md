@@ -4,7 +4,8 @@
 *¿qué archivos tocó Claude, en qué repo, con qué diff y en qué sesión?* — sin abrir un IDE,
 sin chat con IA, y **sin depender de git ni de hooks**.
 
-> Estado: **Fase 0** (parser/CLI). Valida la capa de datos antes de invertir en la UI de escritorio.
+> Estado: **Fase 2** — app de escritorio (Tauri 2.x) con el parser de Rust como backend nativo.
+> Fases 0 (parser/CLI), 1 (UI web) y 2 (empaquetado) completas.
 
 ## Por qué existe
 
@@ -76,14 +77,54 @@ npm run dev                     # http://localhost:5173
 Layout: sidebar `repo → sesión → archivos tocados` (con `+/-` y ⚠ `userModified`), panel central
 con el diff before/after del archivo seleccionado. Todo el peso del frontend: ~93 KB gzip.
 
+## App de escritorio (Fase 2)
+
+Misma UI, empaquetada en **Tauri 2.x**: el parser de Rust es el **backend nativo** (sin sidecar
+ni servidor HTTP). La UI Svelte se reutiliza tal cual; solo su capa de transporte (`web/src/lib/api.ts`)
+detecta el entorno y usa Tauri `invoke()` dentro de la app o `fetch` en el navegador — así
+`npm run dev` sigue funcionando para iterar rápido.
+
+```bash
+# requisitos del sistema (Linux/Debian/Ubuntu/Pop!_OS), una vez:
+sudo apt install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
+cargo install tauri-cli --version "^2"     # CLI de Tauri
+
+# desarrollo: ventana nativa con hot-reload del frontend
+cargo tauri dev      # (desde la raíz del repo)
+
+# instalable: .deb + AppImage en src-tauri/target/release/bundle/
+cargo tauri build
+```
+
+- **Backend nativo** (`src-tauri/`): dos comandos `invoke` — `report()` y `content(file, session)` —
+  que envuelven la librería del parser (`arrow = { path = ".." }`, ver Arquitectura). El AppImage
+  corre standalone, leyendo `~/.claude/projects` directamente desde Rust.
+- **Refresco en vivo nativo**: un watcher `notify` sobre `~/.claude/projects` emite el evento
+  `report-changed` (con debounce) y la UI refresca al instante; se mantiene un polling lento como
+  fallback. (Semántica del badge `live`: sigue siendo *actividad reciente* <20 min, no *sesión en
+  curso* — un límite honesto heredado de la Fase 1.)
+- **Linux/WebKitGTK**: la app fija `WEBKIT_DISABLE_DMABUF_RENDERER=1` en su `main()` (evita la
+  pantalla en blanco por DMABUF/NVIDIA); el bug de `font-weight` (+100) ya está compensado en
+  `web/src/app.css` (`font-weight: 350`).
+
+### Arquitectura (parser compartido, sin duplicar)
+
+El parser vive en una **librería** (`src/lib.rs`): funciones puras `build_report(projects_dir)` y
+`file_content(projects_dir, file, session)` + los structs serializables. La consumen dos frontends:
+`src/main.rs` (la CLI, flags intactos) y `src-tauri/` (el backend de escritorio). Cero lógica
+duplicada; la misma fuente de verdad para terminal, web y app nativa.
+
 ## Roadmap
 
 - [x] **Fase 0** — parser nativo `JSONL → repo/sesión/archivo/diff`, salida en terminal y `--json`.
 - [x] **Fase 1** — UI web local (Vite + Svelte 5) consumiendo el parser: sidebar
       `repo → sesión → archivos` (estilo Antigravity) + diff por archivo con
       **CodeMirror 6 + `@codemirror/merge`**. (Solo lectura; la edición es Fase 4.)
-- [ ] **Fase 2** — empaquetar en **Tauri 2.x** (`.deb`/AppImage). El parser de Rust pasa a ser
-      el backend nativo (sin sidecar). Watcher por mtime para refresco en vivo.
+- [x] **Fase 2** — empaquetado en **Tauri 2.x** (`.deb` + AppImage). El parser de Rust se extrajo
+      a una **librería** (`src/lib.rs`) y es el backend nativo (sin sidecar); la CLI y la app lo
+      comparten. Frontend dual-mode (`invoke`/`fetch`), watcher `notify` → evento `report-changed`
+      para refresco en vivo, y mitigación WebKitGTK. El badge `live` sigue siendo *actividad
+      reciente* (<20 min), no *sesión en curso* — pendiente de revisar en una fase futura.
 - [ ] **Fase 3** — honestidad + git: toggle "git diff working tree", marcado de `userModified`,
       timeline point-in-time reusando `file-history`.
 - [ ] **Fase 4** (postergado) — edición real con guardado a disco, integración GitHub (PRs/commits).

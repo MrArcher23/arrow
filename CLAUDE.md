@@ -1,17 +1,24 @@
 # arrow — visor de auditoría de Claude Code
 
-App de escritorio (en construcción) que audita **qué archivos tocó Claude Code**:
+App de escritorio que audita **qué archivos tocó Claude Code**:
 `repo → sesión → archivos → diff`, **sin chat con IA**. Ver @README.md para overview y roadmap.
 
-Stack: parser en **Rust** (`src/main.rs`) + UI web **Svelte 5 + Vite + CodeMirror 6** (`web/`).
-Empaquetado futuro en **Tauri 2.x** (Fase 2). Estado: Fase 0 y 1 completas (parser + UI web).
+Stack: parser en **Rust** como **librería** (`src/lib.rs`) consumida por la CLI (`src/main.rs`) y
+por el backend de Tauri (`src-tauri/`); UI web **Svelte 5 + Vite + CodeMirror 6** (`web/`),
+empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web + app de escritorio).
 
 ## Build / run / verificar
-- Compilar parser: `cargo build --release` → binario en `target/release/arrow`.
+- Compilar parser/CLI: `cargo build --release` → binario en `target/release/arrow`.
   Si `cargo` no está en PATH, usar `~/.cargo/bin/cargo` (toolchain instalada con rustup).
-- Levantar la UI (dev): `cd web && npm install && npm run dev` → http://localhost:5173
+  Toda la lógica vive en `src/lib.rs` (`build_report`, `file_content`); `src/main.rs` es la CLI.
+- Levantar la UI web (dev): `cd web && npm install && npm run dev` → http://localhost:5173
   El dev-server (`web/vite.config.ts`) **ejecuta el binario** `target/release/arrow`; tras tocar
-  `src/main.rs` hay que **recompilar** para que la UI vea los cambios.
+  `src/lib.rs` hay que **recompilar** para que la UI vea los cambios.
+- App de escritorio (Tauri): `cargo tauri dev` (ventana nativa) / `cargo tauri build`
+  (`.deb` + AppImage en `src-tauri/target/release/bundle/`). Requiere `cargo install tauri-cli --version "^2"`
+  y, en Linux, `libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev` (apt, sudo).
+  `cargo tauri` ejecuta `beforeDevCommand` desde la **raíz del repo** (de ahí `npm --prefix web`).
+  `src-tauri/` es su **propia raíz de workspace**: `cargo build` en la raíz NO arrastra el backend Tauri.
 - Build del frontend: `npm --prefix web run build`.
 - **No hay tests**: la verificación es ejecutar el parser contra datos reales → skill `/verify-parser`.
 
@@ -31,8 +38,10 @@ Empaquetado futuro en **Tauri 2.x** (Fase 2). Estado: Fase 0 y 1 completas (pars
 - Formato JSONL **interno, no documentado, volátil, se auto-borra a ~30 días** → **parsing defensivo**:
   una línea inválida se ignora, nunca rompe (parse a `serde_json::Value`, no a structs rígidos).
 - `git diff` es solo **vista secundaria** opcional (muchos repos no son git; no atribuye por sesión).
-- La capa de fetch del frontend vive aislada en `web/src/lib/api.ts`: en Fase 2 se cambia por Tauri
-  `invoke()` **sin tocar la UI**. No acoplar componentes Svelte al transporte HTTP.
+- La capa de fetch del frontend vive aislada en `web/src/lib/api.ts` (ya dual-mode: Tauri `invoke()`
+  dentro de la app, `fetch` en el navegador, detectado por `__TAURI_INTERNALS__`). No acoplar
+  componentes Svelte al transporte: cualquier cambio de transporte se hace solo en `api.ts`.
+  `api.ts` cachea contenidos ya cargados (revisitas instantáneas) y purga el cache al cambiar el report.
 
 ## Convenciones
 - Comunícate en **español**; comentarios de código en español, identificadores en inglés.
@@ -46,3 +55,4 @@ Empaquetado futuro en **Tauri 2.x** (Fase 2). Estado: Fase 0 y 1 completas (pars
 - `/run-arrow` — compila el parser y levanta la UI.
 - `/verify-parser` — recompila y corre el parser contra `~/.claude` (verificación pass/fail).
 - `/inspect-transcript` — recetas `jq` para explorar el formato JSONL al extender el parser.
+- `/rust-review` — revisa la calidad del Rust (clippy + rustfmt + checklist de best-practices afinado a arrow). Complementa a `/verify-parser` (datos): este mira el código.

@@ -3,7 +3,8 @@
   import Sidebar from './components/Sidebar.svelte'
   import DiffView from './components/DiffView.svelte'
   import ThemeMenu from './components/ThemeMenu.svelte'
-  import { loadReport, loadContent } from './lib/api'
+  import { listen } from '@tauri-apps/api/event'
+  import { loadReport, loadContent, clearContentCache, inTauri } from './lib/api'
   import { isLive } from './lib/time'
   import { DEFAULT_THEME } from './lib/themes'
   import type { Report, FileContent } from './lib/types'
@@ -30,6 +31,10 @@
       const txt = JSON.stringify(r)
       if (txt === lastJson) return // nada cambió: no re-renderizar
       lastJson = txt
+      // El report cambió (hubo ediciones nuevas): purgamos el cache de contenidos
+      // para que los diffs no queden obsoletos. Las revisitas dentro del mismo
+      // estado del report siguen siendo instantáneas.
+      clearContentCache()
       report = r
       if (initial) {
         // Solo en la primera carga auto-seleccionamos; los refrescos NO roban foco.
@@ -44,8 +49,18 @@
 
   onMount(() => {
     refresh(true)
-    const id = setInterval(() => refresh(false), 5000) // auto-refresco "en vivo"
-    return () => clearInterval(id)
+    // Navegador: polling cada 5s. Tauri: el watcher nativo emite `report-changed`
+    // y refrescamos al instante; dejamos un polling lento como backstop (honestidad:
+    // si el watcher fallara, la UI no se queda congelada).
+    const id = setInterval(() => refresh(false), inTauri ? 15000 : 5000)
+    let unlisten: (() => void) | undefined
+    if (inTauri) {
+      listen('report-changed', () => refresh(false)).then((u) => (unlisten = u))
+    }
+    return () => {
+      clearInterval(id)
+      unlisten?.()
+    }
   })
 
   async function select(session: string, path: string) {
