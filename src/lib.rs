@@ -665,15 +665,19 @@ mod tests {
             "",
             &["+x"],
         );
-        // Top-level: cuenta.
-        write_top_level(&dir, "proj", "s1", &[rec.clone()]);
+        // Top-level: cuenta. `rec` se reutiliza abajo, así que pasamos un slice
+        // prestado en vez de clonar (clippy: useless clone).
+        write_top_level(&dir, "proj", "s1", std::slice::from_ref(&rec));
         // Anidado (subagente): <projects>/proj/nested/s2.jsonl → 3 componentes, se ignora.
         let nested = dir.join("proj").join("nested");
         fs::create_dir_all(&nested).unwrap();
         fs::write(nested.join("s2.jsonl"), &rec).unwrap();
 
         let c = collect(dir.to_str().unwrap(), None, None);
-        assert_eq!(c.jsonl_files, 1, "solo el transcript de primer nivel cuenta");
+        assert_eq!(
+            c.jsonl_files, 1,
+            "solo el transcript de primer nivel cuenta"
+        );
     }
 
     #[test]
@@ -770,7 +774,9 @@ mod tests {
             .flat_map(|s| s.files.keys())
             .collect();
         assert!(
-            !files.iter().any(|p| p.starts_with(&format!("{home}/.claude/"))),
+            !files
+                .iter()
+                .any(|p| p.starts_with(&format!("{home}/.claude/"))),
             "el HOME global ~/.claude/ debe filtrarse"
         );
         assert!(
@@ -783,7 +789,10 @@ mod tests {
     fn repos_ordenados_por_recencia() {
         let dir = tmpdir("recencia");
         // Dos repos con git root distinto; el de timestamp mayor va primero.
-        for (name, ts) in [("viejo", "2026-01-01T00:00:00Z"), ("nuevo", "2026-06-01T00:00:00Z")] {
+        for (name, ts) in [
+            ("viejo", "2026-01-01T00:00:00Z"),
+            ("nuevo", "2026-06-01T00:00:00Z"),
+        ] {
             let repo = dir.join(name);
             fs::create_dir_all(repo.join(".git")).unwrap();
             let file = repo.join("a.txt");
@@ -849,13 +858,27 @@ mod tests {
             &dir,
             "proj",
             "sessA",
-            &[edit_record("sessA", repo.to_str().unwrap(), fp, "2026-01-01T00:00:00Z", "BEFORE de A\n", &["+x"])],
+            &[edit_record(
+                "sessA",
+                repo.to_str().unwrap(),
+                fp,
+                "2026-01-01T00:00:00Z",
+                "BEFORE de A\n",
+                &["+x"],
+            )],
         );
         write_top_level(
             &dir,
             "proj",
             "sessB",
-            &[edit_record("sessB", repo.to_str().unwrap(), fp, "2026-02-01T00:00:00Z", "BEFORE de B\n", &["+y"])],
+            &[edit_record(
+                "sessB",
+                repo.to_str().unwrap(),
+                fp,
+                "2026-02-01T00:00:00Z",
+                "BEFORE de B\n",
+                &["+y"],
+            )],
         );
 
         // Con filtro de sesión: before es el de ESA sesión; after viene del disco.
