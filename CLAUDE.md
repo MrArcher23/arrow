@@ -18,7 +18,9 @@ empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web 
 - App de escritorio (Tauri): `cargo tauri dev` (ventana nativa) / `cargo tauri build`
   (`.deb` + AppImage en `src-tauri/target/release/bundle/`). Requiere `cargo install tauri-cli --version "^2"`
   y, en Linux, `libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev` (apt, sudo).
-  `cargo tauri` ejecuta `beforeDevCommand` desde la **raíz del repo** (de ahí `npm --prefix web`).
+  `cargo tauri` (CLI 2.x) ejecuta `beforeDevCommand`/`beforeBuildCommand` desde el **dir del frontend**
+  (`web/`, derivado de `frontendDist: ../web/dist`), NO desde la raíz del repo → por eso son `npm run dev`
+  / `npm run build` **sin** `--prefix web` (un `--prefix web` buscaría `web/web/package.json` y falla).
   `src-tauri/` es su **propia raíz de workspace**: `cargo build` en la raíz NO arrastra el backend Tauri.
 - Build del frontend: `npm --prefix web run build`.
 - **No hay tests**: la verificación es ejecutar el parser contra datos reales → skill `/verify-parser`.

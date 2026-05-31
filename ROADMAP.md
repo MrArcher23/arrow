@@ -5,7 +5,7 @@ Archivo de seguimiento entre sesiones. El **roadmap canónico de fases** vive en
 backlog de ideas que aún no están comprometidas a ninguna fase. Las **convenciones** del proyecto
 están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 
-> Última actualización: 2026-05-30 (cierre de Fase 2 + pulido).
+> Última actualización: 2026-05-30 (cierre de Fase 2 + pulido + mejoras visuales: zoom y titlebar custom).
 
 ## Estado actual
 
@@ -30,6 +30,26 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 - **Skill `/rust-review`**: clippy + rustfmt + checklist de best-practices (ver
   `.claude/skills/rust-review/`).
 
+### Mejoras visuales / UX (post-Fase 2)
+- **Zoom de la UI** (`Ctrl +` / `Ctrl −` / `Ctrl 0`, estilo VSCode): zoom **nativo** del webview en la
+  app Tauri (`getCurrentWebview().setZoom`; no toca el layout → no descoloca a CodeMirror ni depende
+  de la versión de WebKitGTK) y CSS `zoom` como fallback en el navegador (dev). Persiste en
+  `localStorage` (`arrow.zoom`) y se reaplica al arrancar; rango 60–200%, widget `− % +` en la topbar.
+  Lógica aislada en `web/src/lib/zoom.ts` (misma convención que `api.ts`). Requirió el permiso ACL
+  `core:webview:allow-set-webview-zoom` en `src-tauri/capabilities/default.json`.
+- **Titlebar custom** (`decorations:false` + `resizable:true`): botones min/max/close propios
+  (`web/src/components/WindowControls.svelte` → `getCurrentWindow().minimize()/toggleMaximize()/close()`,
+  aislados en `web/src/lib/window.ts`), barra como zona de arrastre (`data-tauri-drag-region`),
+  doble-click = maximizar, y borde CSS sutil (GTK pierde la sombra sin decoraciones). Garantiza los
+  botones **cross-distro**: en Pop!_OS/GNOME el WM no los pintaba de forma fiable bajo Pop Shell, y el
+  `gsettings button-layout` ya estaba correcto pero no ayudaba (ni viaja con la app, ni aplica en COSMIC).
+  Permisos ACL: `core:window:allow-{minimize,toggle-maximize,close,start-dragging}`.
+- **Fix de arranque Tauri**: `beforeDevCommand`/`beforeBuildCommand` en `tauri.conf.json` eran
+  `npm --prefix web run …`, pero el CLI 2.11 los ejecuta desde `web/` (dir del frontend), NO desde la
+  raíz → buscaba `web/web/package.json` y `cargo tauri dev` fallaba. Corregidos a `npm run dev` /
+  `npm run build` (sin `--prefix`); nota de CLAUDE.md actualizada. ✅ Verificado: `cargo tauri dev`
+  levanta la ventana y `cargo tauri build` genera `.deb` (2.0M) + AppImage (77M).
+
 ## Backlog de ideas (sin comprometer fase)
 
 Mejoras propuestas que NO están en el roadmap de fases. A discutir/priorizar antes de implementar;
@@ -43,7 +63,9 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
   por archivo; sería agregación, posible en frontend o como campo nuevo en el contrato.)
 - **Export** — copiar el diff de un archivo al portapapeles o exportar un resumen de sesión a
   Markdown (lista de archivos + `+/-` + título). Útil para PRs o reportes.
-- **Atajos de teclado** — navegar el árbol y abrir diffs sin ratón (j/k, enter, etc.).
+- **Atajos de teclado** — navegar el árbol y abrir diffs sin ratón (j/k, enter, etc.). (Los atajos de
+  **zoom** `Ctrl +/−/0` ya están; faltan los de navegación. Reusarían el mismo `keydown` global de
+  `App.svelte` (`onKey`).)
 
 ## Deuda técnica / notas
 

@@ -1,7 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capacidad por defecto: la ventana principal puede invocar los comandos de la app y escuchar eventos.",
+  "description": "Capacidad por defecto: la ventana principal puede invocar los comandos de la app, escuchar eventos, controlar la ventana (titlebar custom) y ajustar el zoom del webview.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:webview:allow-set-webview-zoom",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging"
+  ]
 }

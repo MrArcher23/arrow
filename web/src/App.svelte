@@ -3,8 +3,11 @@
   import Sidebar from './components/Sidebar.svelte'
   import DiffView from './components/DiffView.svelte'
   import ThemeMenu from './components/ThemeMenu.svelte'
+  import WindowControls from './components/WindowControls.svelte'
   import { listen } from '@tauri-apps/api/event'
   import { loadReport, loadContent, clearContentCache, inTauri } from './lib/api'
+  import { loadZoom, applyZoom, clampZoom, ZOOM_STEP } from './lib/zoom'
+  import { winToggleMaximize } from './lib/window'
   import { isLive } from './lib/time'
   import { DEFAULT_THEME } from './lib/themes'
   import type { Report, FileContent } from './lib/types'
@@ -19,6 +22,38 @@
   let liveCount = $derived(
     report ? report.repos.filter((r) => isLive(r.sessions[0]?.lastActivity)).length : 0
   )
+
+  // Zoom de la UI (estilo VSCode/terminal): Ctrl +/−/0. El estado vive aquí (reactivo);
+  // applyZoom aísla el entorno (setZoom nativo en Tauri, CSS `zoom` en navegador).
+  let zoomFactor = $state(loadZoom())
+  let zoomPct = $derived(Math.round(zoomFactor * 100))
+
+  function setZoom(n: number) {
+    zoomFactor = clampZoom(n)
+    applyZoom(zoomFactor)
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey)) return
+    if (e.key === '+' || e.key === '=') {
+      e.preventDefault()
+      setZoom(zoomFactor + ZOOM_STEP)
+    } else if (e.key === '-' || e.key === '_') {
+      e.preventDefault()
+      setZoom(zoomFactor - ZOOM_STEP)
+    } else if (e.key === '0') {
+      e.preventDefault()
+      setZoom(1)
+    }
+  }
+
+  // Doble-click en la zona de arrastre = maximizar/restaurar. No está garantizado por
+  // data-tauri-drag-region en WebKitGTK, así que lo cableamos explícitamente; solo
+  // dispara sobre la superficie de arrastre (no sobre los botones de la barra).
+  function onTitlebarDblClick(e: MouseEvent) {
+    if (!inTauri) return
+    if ((e.target as HTMLElement)?.hasAttribute('data-tauri-drag-region')) winToggleMaximize()
+  }
 
   $effect(() => {
     localStorage.setItem('arrow.theme', theme)
@@ -48,6 +83,7 @@
   }
 
   onMount(() => {
+    applyZoom(zoomFactor) // reaplica el zoom persistido (setZoom no sobrevive al reinicio)
     refresh(true)
     // Navegador: polling cada 5s. Tauri: el watcher nativo emite `report-changed`
     // y refrescamos al instante; dejamos un polling lento como backstop (honestidad:
@@ -77,14 +113,24 @@
   }
 </script>
 
+<svelte:window onkeydown={onKey} />
+
 <div class="app">
-  <header class="topbar">
-    <span class="brand">arrow</span>
-    <span class="subtitle">audit of Claude Code changes</span>
+  <!-- Titlebar custom: el doble-click maximiza (convención de ventana, no control de teclado). -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <header class="topbar" data-tauri-drag-region ondblclick={onTitlebarDblClick}>
+    <span class="brand" data-tauri-drag-region>arrow</span>
+    <span class="subtitle" data-tauri-drag-region>audit of Claude Code changes</span>
     <div class="actions">
       {#if liveCount > 0}<span class="live">● {liveCount} live</span>{/if}
       {#if report}<span class="repos">{report.repoCount} repos</span>{/if}
+      <div class="zoom">
+        <button class="zbtn" onclick={() => setZoom(zoomFactor - ZOOM_STEP)} title="Zoom out (Ctrl −)" aria-label="Zoom out">−</button>
+        <button class="zpct" onclick={() => setZoom(1)} title="Reset zoom (Ctrl 0)" aria-label="Reset zoom">{zoomPct}%</button>
+        <button class="zbtn" onclick={() => setZoom(zoomFactor + ZOOM_STEP)} title="Zoom in (Ctrl +)" aria-label="Zoom in">+</button>
+      </div>
       <ThemeMenu current={theme} onSelect={(id) => (theme = id)} />
+      <WindowControls />
     </div>
   </header>
 
@@ -121,6 +167,9 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
+    /* Sin decoraciones nativas (decorations:false) GTK no garantiza sombra/borde:
+       un borde sutil separa la ventana del escritorio. */
+    border: 1px solid var(--border);
   }
   .topbar {
     display: flex;
@@ -130,6 +179,8 @@
     border-bottom: 1px solid var(--border);
     background: var(--panel);
     flex: none;
+    /* La barra completa es la zona de arrastre de la ventana sin titlebar nativa. */
+    cursor: default;
   }
   .brand {
     font-weight: 700;
@@ -151,6 +202,42 @@
   }
   .repos {
     color: var(--dim);
+  }
+  .zoom {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--chip);
+  }
+  .zbtn,
+  .zpct {
+    border: none;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    cursor: pointer;
+  }
+  .zbtn {
+    width: 22px;
+    padding: 1px 0;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--dim);
+  }
+  .zbtn:hover,
+  .zpct:hover {
+    background: var(--hover);
+  }
+  .zpct {
+    min-width: 40px;
+    padding: 2px 4px;
+    font-size: 11px;
+    color: var(--dim);
+    text-align: center;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
   }
   .layout {
     display: flex;

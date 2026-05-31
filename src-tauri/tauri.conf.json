@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.arrow.audit",
   "build": {
-    "beforeDevCommand": "npm --prefix web run dev",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm --prefix web run build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../web/dist"
   },
   "app": {
@@ -15,7 +15,9 @@
         "label": "main",
         "title": "arrow",
         "width": 1280,
-        "height": 800
+        "height": 800,
+        "decorations": false,
+        "resizable": true
       }
     ],
     "security": {
