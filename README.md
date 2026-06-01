@@ -96,6 +96,10 @@ cargo tauri dev      # (desde la raíz del repo)
 cargo tauri build
 ```
 
+> **macOS:** la app se adapta sola al OS (titlebar nativa con semáforos + peso de fuente
+> correcto). Para compilar el `.app`/`.dmg` —que solo se puede en una Mac— ver
+> [MACOS.md](MACOS.md).
+
 - **Backend nativo** (`src-tauri/`): dos comandos `invoke` — `report()` y `content(file, session)` —
   que envuelven la librería del parser (`arrow = { path = ".." }`, ver Arquitectura). El AppImage
   corre standalone, leyendo `~/.claude/projects` directamente desde Rust.

@@ -89,4 +89,9 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
   report no cambia, el "Nm ago" no avanza. Un tick de reloj independiente lo resolvería (también
   anotado en SPEC.md).
 - **Sin CI**: los tests y `/rust-review` se corren a mano. Si el proyecto crece, valdría un workflow
-  de GitHub Actions (`cargo test` + `cargo clippy` + `cargo fmt --check`).
+  de GitHub Actions (`cargo test` + `cargo clippy` + `cargo fmt --check`). También habilitaría el
+  **build de macOS** en un runner `macos` (`tauri-action`) sin necesitar una Mac física.
+- **macOS sin verificar**: el código ya está adaptado a Mac (titlebar nativa + font-weight por OS;
+  ver [MACOS.md](MACOS.md)), pero el bloque `cfg(target_os = "macos")` solo se activa al compilar en
+  una Mac → falta el primer `cargo tauri build --bundles app dmg` real para confirmar el look de la
+  titlebar y el `.dmg`. La firma/notarización (Gatekeeper) queda fuera del MVP.
