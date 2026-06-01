@@ -128,7 +128,11 @@
     min-height: 0;
     overflow: auto;
   }
+  /* Cadena de alturas completa: el wrapper flex intermedio (.cm-mergeViewEditors)
+     también necesita height:100% o los editores se quedan al alto del contenido y
+     dejan un hueco vacío bajo los diffs cortos. */
   .diff-host :global(.cm-mergeView),
+  .diff-host :global(.cm-mergeViewEditors),
   .diff-host :global(.cm-editor) {
     height: 100%;
   }

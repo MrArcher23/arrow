@@ -56,6 +56,56 @@
     if ((e.target as HTMLElement)?.hasAttribute('data-tauri-drag-region')) winToggleMaximize()
   }
 
+  // Sidebar redimensionable + colapsable (estilo VSCode): arrastrar el divisor cambia el
+  // ancho; doble-click o el botón de la topbar lo colapsa. Ancho y estado persistidos.
+  const SIDEBAR_MIN = 180
+  const SIDEBAR_MAX = 640
+  function loadSidebarWidth(): number {
+    const n = Number(localStorage.getItem('arrow.sidebarWidth'))
+    return Number.isFinite(n) && n >= SIDEBAR_MIN && n <= SIDEBAR_MAX ? n : 340
+  }
+  let sidebarWidth = $state(loadSidebarWidth())
+  let sidebarCollapsed = $state(localStorage.getItem('arrow.sidebarCollapsed') === 'true')
+  let resizing = $state(false)
+  let layoutEl: HTMLDivElement | undefined
+  // Estado del arrastre. Umbral de 4px para distinguir un drag real de un click/doble-click
+  // (un click nunca inicia un resize), y pointer capture para que el pointerup SIEMPRE llegue
+  // aunque sueltes fuera del divisor → el arrastre no se "queda pegado".
+  let armed = false
+  let startX = 0
+  let startWidth = 0
+
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed
+    localStorage.setItem('arrow.sidebarCollapsed', String(sidebarCollapsed))
+  }
+  function onResizeDown(e: PointerEvent) {
+    if (e.button !== 0) return
+    armed = true
+    startX = e.clientX
+    startWidth = sidebarCollapsed ? SIDEBAR_MIN : sidebarWidth
+    // El pointer capture se libera solo en pointerup (no rompe el doble-click).
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+  function onResizeMove(e: PointerEvent) {
+    if (!armed || !layoutEl) return
+    const dx = e.clientX - startX
+    if (!resizing) {
+      if (Math.abs(dx) < 4) return // aún no es un drag: deja pasar el click/doble-click
+      resizing = true
+      sidebarCollapsed = false
+    }
+    sidebarWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startWidth + dx))
+  }
+  function onResizeUp() {
+    if (!armed) return
+    armed = false
+    if (resizing) {
+      resizing = false
+      localStorage.setItem('arrow.sidebarWidth', String(Math.round(sidebarWidth)))
+    }
+  }
+
   $effect(() => {
     localStorage.setItem('arrow.theme', theme)
   })
@@ -120,6 +170,12 @@
   <!-- Titlebar custom: el doble-click maximiza (convención de ventana, no control de teclado). -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <header class="topbar" data-tauri-drag-region ondblclick={onTitlebarDblClick}>
+    <button class="icon-btn" onclick={toggleSidebar} title="Toggle sidebar" aria-label="Toggle sidebar">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" />
+        <line x1="6" y1="2.5" x2="6" y2="13.5" stroke="currentColor" />
+      </svg>
+    </button>
     <span class="brand" data-tauri-drag-region>arrow</span>
     <span class="subtitle" data-tauri-drag-region>audit of Claude Code changes</span>
     <div class="actions">
@@ -135,8 +191,12 @@
     </div>
   </header>
 
-  <div class="layout">
-    <aside class="sidebar">
+  <div class="layout" class:resizing bind:this={layoutEl}>
+    <aside
+      class="sidebar"
+      class:collapsed={sidebarCollapsed}
+      style:width={sidebarCollapsed ? '0px' : sidebarWidth + 'px'}
+    >
       {#if error}
         <div class="error">{error}</div>
       {/if}
@@ -146,6 +206,17 @@
         <div class="loading">Loading sessions…</div>
       {/if}
     </aside>
+
+    <!-- Divisor arrastrable: ancho con el mouse; doble-click colapsa/expande. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="resizer"
+      title="Drag to resize · double-click to collapse"
+      onpointerdown={onResizeDown}
+      onpointermove={onResizeMove}
+      onpointerup={onResizeUp}
+      ondblclick={toggleSidebar}
+    ></div>
 
     <main class="main">
       {#if selected}
@@ -182,6 +253,23 @@
     flex: none;
     /* La barra completa es la zona de arrastre de la ventana sin titlebar nativa. */
     cursor: default;
+  }
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--dim);
+    cursor: pointer;
+  }
+  .icon-btn:hover {
+    background: var(--hover);
+    color: var(--fg);
   }
   .brand {
     font-weight: 700;
@@ -246,12 +334,39 @@
     min-height: 0;
   }
   .sidebar {
-    width: 340px;
     flex: none;
-    border-right: 1px solid var(--border);
     background: var(--panel);
     overflow: auto;
     padding: 8px;
+    transition: width 0.12s ease;
+  }
+  .sidebar.collapsed {
+    padding: 0;
+    overflow: hidden;
+  }
+  /* El divisor arrastrable hace de borde entre sidebar y diff. */
+  .resizer {
+    flex: none;
+    width: 6px;
+    cursor: col-resize;
+    border-left: 1px solid var(--border);
+    background: transparent;
+  }
+  .resizer:hover,
+  .layout.resizing .resizer {
+    border-left-color: var(--accent);
+    background: var(--active);
+  }
+  /* Durante el arrastre: sin transición (sigue al cursor) y sin interacción con el diff. */
+  .layout.resizing {
+    cursor: col-resize;
+    user-select: none;
+  }
+  .layout.resizing .sidebar {
+    transition: none;
+  }
+  .layout.resizing .main {
+    pointer-events: none;
   }
   .main {
     flex: 1;
