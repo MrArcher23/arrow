@@ -16,6 +16,8 @@ use std::time::Duration;
 use arrow::{ContentOut, ReportOut};
 use notify::{RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter};
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 
 /// `~/.claude/projects` (fuente de verdad nativa de Claude Code).
 fn projects_dir() -> String {
@@ -117,6 +119,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![report, content])
         .setup(|app| {
             spawn_watcher(app.handle().clone());
+            // macOS: restaurar la decoración nativa (semáforos rojo/amarillo/verde). En
+            // Linux/Windows mantenemos la titlebar custom (decorations:false del config),
+            // porque ahí el WM no pinta los botones de min/max de forma fiable.
+            #[cfg(target_os = "macos")]
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_decorations(true);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

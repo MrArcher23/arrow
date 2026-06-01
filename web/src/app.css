@@ -15,7 +15,12 @@
 
   color-scheme: dark;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  /* WebKitGTL (Tauri/Linux) renderiza ~100 unidades más pesado: pedimos un escalón más ligero. */
+}
+
+/* WebKitGTK (Tauri/Linux) renderiza ~100 unidades más pesado: pedimos un escalón más
+   ligero SOLO en Linux. En macOS (WKWebView) y Windows (WebView2) el peso normal es el
+   correcto; ahí el 350 dejaría el texto demasiado fino. La clase la pone platform.ts. */
+:root.is-linux {
   font-weight: 350;
 }
 

@@ -3,10 +3,12 @@
   // dentro de la app Tauri; en el navegador (npm run dev) no aparecen. La lógica de
   // ventana vive aislada en lib/window.ts (igual que el transporte en lib/api.ts).
   import { inTauri } from '../lib/api'
+  import { isMac } from '../lib/platform'
   import { winMinimize, winToggleMaximize, winClose } from '../lib/window'
 </script>
 
-{#if inTauri}
+<!-- En macOS la ventana usa decoración nativa (semáforos): no pintamos botones custom. -->
+{#if inTauri && !isMac}
   <div class="winctl">
     <button class="wbtn" onclick={winMinimize} title="Minimize" aria-label="Minimize">
       <svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" /></svg>
