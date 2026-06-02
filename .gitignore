@@ -4,3 +4,11 @@ web/dist
 # Tauri (Fase 2): build nativo + código generado por tauri-build.
 src-tauri/target
 src-tauri/gen
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*~
+*.swp
+.idea/
+.vscode/

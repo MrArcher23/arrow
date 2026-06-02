@@ -44,7 +44,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # CLI de Tauri 2.x
 cargo install tauri-cli --version "^2"
 
-# Node 20+ y npm (si no están). Con Homebrew:
+# Node 22 y npm (la versión que usa el CI; si no están). Con Homebrew:
 brew install node
 ```
 
