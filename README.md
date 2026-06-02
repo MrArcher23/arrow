@@ -1,172 +1,186 @@
 # arrow
 
-**Visor de auditoría de Claude Code.** Responde a una sola pregunta, de forma fiable:
-*¿qué archivos tocó Claude, en qué repo, con qué diff y en qué sesión?* — sin abrir un IDE,
-sin chat con IA, y **sin depender de git ni de hooks**.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Built with Rust](https://img.shields.io/badge/built%20with-Rust-000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
+[![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev/)
+[![CI](https://github.com/MrArcher23/arrow/actions/workflows/ci.yml/badge.svg)](https://github.com/MrArcher23/arrow/actions/workflows/ci.yml)
 
-> Estado: **Fase 2 completa + pulido** — app de escritorio (Tauri 2.x) con el parser de Rust como
-> backend nativo, **ya usable a diario** en Linux (`.deb` + AppImage). Fases 0 (parser/CLI), 1 (UI
-> web) y 2 (empaquetado) completas; post-Fase 2 se sumaron 9 tests del parser, watcher resiliente,
-> zoom, titlebar custom, foco por sesión activa y adaptación a macOS. Fases 3 (honestidad + git) y 4
-> (edición) pendientes — detalle en [ROADMAP.md](ROADMAP.md).
+**An audit viewer for Claude Code.** It answers a single question, reliably:
+*which files did Claude touch, in which repo, with what diff, and in which session?* — without
+opening an IDE, without AI chat, and **without depending on git or hooks**.
 
-## Por qué existe
+> Status: **Phase 2 complete + polish** — a desktop app (Tauri 2.x) with the Rust parser as its
+> native backend, **already usable day to day** on Linux (`.deb` + AppImage). Phases 0 (parser/CLI),
+> 1 (web UI) and 2 (packaging) are complete; after Phase 2 we added 9 parser tests, a resilient
+> watcher, zoom, a custom titlebar, active-session focus, and macOS adaptation. Phases 3 (honesty +
+> git) and 4 (editing) are pending — details in [ROADMAP.md](ROADMAP.md).
 
-Cuando Claude Code pasa a ser **el que ejecuta** la mayoría de los cambios, tu trabajo se vuelve
-**dirigir y revisar**: el IDE deja de ser donde escribís y queda relegado a *"mostrame qué tocó"*.
-Pero mantener un IDE —o un cliente Git pesado tipo Electron— abierto solo para revisar diffs
-desperdicia de cientos de MB a varios GB de RAM. arrow hace exactamente esa parte —ver qué cambió
-Claude, repo por repo y sesión por sesión— en una app liviana y enfocada.
+## Why it exists
 
-Y el espacio de tooling para Claude Code está saturado, pero nadie cubre exactamente esto:
-una **UI gráfica, sin chat**, con la jerarquía `repositorio → archivos tocados → diff/editor`
-como audit trail navegable. Lo más cercano es un TUI de terminal (`claude-file-recovery`),
-un cliente de chat web (`claude-code-viewer`), o GUIs grandes orientadas a *ejecutar* agentes
-(`opcode`, AGPL). Anthropic cerró el feature request de "historial recuperable de ediciones"
-(#36542) como *not planned* — así que el hueco es real, aunque el margen es estrecho.
+When Claude Code becomes **the one doing** most of the changes, your job shifts to **steering and
+reviewing**: the IDE stops being where you write and is relegated to *"show me what it touched."*
+But keeping an IDE — or a heavy Electron-style Git client — open just to review diffs wastes
+anywhere from hundreds of MB to several GB of RAM. arrow does exactly that one part — seeing what
+Claude changed, repo by repo and session by session — in a lightweight, focused app.
 
-## La idea clave: la fuente de datos correcta
+And while the tooling space around Claude Code is crowded, nobody covers exactly this: a **graphical
+UI, no chat**, with the `repository → touched files → diff/editor` hierarchy as a navigable audit
+trail. The closest options are a terminal TUI (`claude-file-recovery`), a web chat client
+(`claude-code-viewer`), or large GUIs oriented toward *running* agents (`opcode`, AGPL). Anthropic
+closed the "recoverable edit history" feature request (#36542) as *not planned* — so the gap is
+real, even if the margin is narrow.
 
-No hace falta instalar ningún hook `session-log`. Claude Code **ya persiste** todo lo necesario,
-de forma nativa y estructurada (verificado en Claude Code v2.1.x):
+## The key idea: the right data source
 
-| Dato | Fuente nativa |
+There is no need to install a `session-log` hook. Claude Code **already persists** everything
+needed, natively and in a structured form (verified on Claude Code v2.1.x):
+
+| Data | Native source |
 |---|---|
-| **Repos** | El campo `cwd` de cada record (ruta real; no se decodifica el nombre del directorio, que es ambiguo). |
-| **Sesiones** | Cada `~/.claude/projects/<cwd-codificado>/<sessionId>.jsonl`. El nombre del fichero **es** el `sessionId`. |
-| **Archivos tocados** | Records `type:"user"` con `toolUseResult.filePath` (solo `Edit`/`Write`/`MultiEdit`). |
-| **Diff (antes/después)** | `toolUseResult.structuredPatch` — los hunks exactos `{oldStart, oldLines, newStart, newLines, lines}`. Ya es el diff por sesión. |
-| **"Antes" / point-in-time** | `~/.claude/file-history/<sessionId>/<hash>@v<n>` — snapshots del contenido previo. |
+| **Repos** | The `cwd` field of each record (the real path; we don't decode the directory name, which is ambiguous). |
+| **Sessions** | Each `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`. The file name **is** the `sessionId`. |
+| **Touched files** | `type:"user"` records with `toolUseResult.filePath` (only `Edit`/`Write`/`MultiEdit`). |
+| **Diff (before/after)** | `toolUseResult.structuredPatch` — the exact hunks `{oldStart, oldLines, newStart, newLines, lines}`. This is already the per-session diff. |
+| **"Before" / point-in-time** | `~/.claude/file-history/<sessionId>/<hash>@v<n>` — snapshots of the prior content. |
 
-`git diff` se reserva como vista **secundaria** opcional (working tree completo), y solo cuando el
-repo es git: no atribuye por autor ni por sesión, y muchos repos no son git.
+`git diff` is kept as an optional **secondary** view (the full working tree), and only when the repo
+is a git repo: it does not attribute by author or by session, and many repos aren't git at all.
 
-## Límites honestos (el producto NO debe mentir)
+## Honest limits (the product must NOT lie)
 
-- Solo se captura lo que pasa por `Edit`/`Write`/`MultiEdit`. Cambios vía comandos `Bash`
-  de la sesión (sed, prettier, build, `mv`, `rm`) **no** aparecen. La etiqueta correcta es
-  *"ediciones vía herramientas de Claude"*, nunca *"todo lo que hizo Claude"*.
-- El flag `userModified` señala drift (el usuario editó entre el read y el write): se marca con ⚠.
-- El formato JSONL es **interno, no documentado, cambia entre versiones y se auto-borra a ~30 días**
-  (`cleanupPeriodDays`). De ahí el parsing defensivo: una línea inválida se ignora, no rompe.
+- Only what goes through `Edit`/`Write`/`MultiEdit` is captured. Changes made via the session's
+  `Bash` commands (sed, prettier, build, `mv`, `rm`) **do not** appear. The correct label is always
+  *"edits via Claude's tools"*, never *"everything Claude did"*.
+- The `userModified` flag signals drift (the user edited between the read and the write): it's
+  marked with ⚠.
+- The JSONL format is **internal, undocumented, changes between versions, and auto-deletes at ~30
+  days** (`cleanupPeriodDays`). Hence the defensive parsing: an invalid line is skipped, never
+  crashing.
 
-## Uso
+## Usage
 
 ```bash
 cargo build --release
 
-# Resumen: todos los repos -> sesiones -> archivos (+/-)
+# Summary: all repos -> sessions -> files (+/-)
 ./target/release/arrow --list
 
-# Diff completo de un repo (filtra por substring del cwd)
-./target/release/arrow --repo mi-proyecto
+# Full diff of a repo (filters by a substring of the cwd)
+./target/release/arrow --repo my-project
 
-# Una sesión concreta (prefijo del sessionId)
+# A specific session (prefix of the sessionId)
 ./target/release/arrow --session 14385fed
 
-# JSON normalizado (el contrato que consumirá la UI de la Fase 1)
-./target/release/arrow --repo mi-proyecto --json
+# Normalized JSON (the contract the UI consumes)
+./target/release/arrow --repo my-project --json
 ```
 
-Opciones: `--projects-dir <ruta>` (por defecto `~/.claude/projects`), `--repo`, `--session`,
-`--list`, `--json`, y `--content --file <ruta> [--session <id>]` (emite `{before, after}` de un
-archivo, para la vista de diff de la UI).
+Options: `--projects-dir <path>` (defaults to `~/.claude/projects`), `--repo`, `--session`,
+`--list`, `--json`, and `--content --file <path> [--session <id>]` (emits `{before, after}` for a
+file, for the UI's diff view).
 
-## UI web (Fase 1)
+## Web UI (Phase 1)
 
-App Vite + Svelte 5 que consume el parser vía un dev-server local que ejecuta el binario `arrow`
-(en `web/vite.config.ts`). La vista de diff usa **CodeMirror 6 + `@codemirror/merge`**.
+A Vite + Svelte 5 app that consumes the parser through a local dev-server which runs the `arrow`
+binary (in `web/vite.config.ts`). The diff view uses **CodeMirror 6 + `@codemirror/merge`**.
 
 ```bash
-cargo build --release          # el dev-server ejecuta target/release/arrow
+cargo build --release          # the dev-server runs target/release/arrow
 cd web && npm install
 npm run dev                     # http://localhost:5173
 ```
 
-Layout: sidebar `repo → sesión → archivos tocados` (con `+/-` y ⚠ `userModified`), panel central
-con el diff before/after del archivo seleccionado. Todo el peso del frontend: ~93 KB gzip.
+Layout: a sidebar `repo → session → touched files` (with `+/-` and ⚠ `userModified`), and a central
+panel with the before/after diff of the selected file. Total frontend weight: ~93 KB gzip.
 
-## App de escritorio (Fase 2)
+## Desktop app (Phase 2)
 
-Misma UI, empaquetada en **Tauri 2.x**: el parser de Rust es el **backend nativo** (sin sidecar
-ni servidor HTTP). La UI Svelte se reutiliza tal cual; solo su capa de transporte (`web/src/lib/api.ts`)
-detecta el entorno y usa Tauri `invoke()` dentro de la app o `fetch` en el navegador — así
-`npm run dev` sigue funcionando para iterar rápido.
+The same UI, packaged in **Tauri 2.x**: the Rust parser is the **native backend** (no sidecar, no
+HTTP server). The Svelte UI is reused as-is; only its transport layer (`web/src/lib/api.ts`) detects
+the environment and uses Tauri `invoke()` inside the app or `fetch` in the browser — so `npm run
+dev` keeps working for fast iteration.
 
 ```bash
-# requisitos del sistema (Linux/Debian/Ubuntu/Pop!_OS), una vez:
+# system requirements (Linux/Debian/Ubuntu/Pop!_OS), once:
 sudo apt install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
-cargo install tauri-cli --version "^2"     # CLI de Tauri
+cargo install tauri-cli --version "^2"     # Tauri CLI
 
-# desarrollo: ventana nativa con hot-reload del frontend
-cargo tauri dev      # (desde la raíz del repo)
+# development: native window with frontend hot-reload
+cargo tauri dev      # (from the repo root)
 
-# instalable: .deb + AppImage en src-tauri/target/release/bundle/
+# installer: .deb + AppImage in src-tauri/target/release/bundle/
 cargo tauri build
 ```
 
-> **macOS:** la app se adapta sola al OS (titlebar nativa con semáforos + peso de fuente
-> correcto). Para compilar el `.app`/`.dmg` —que solo se puede en una Mac— ver
-> [MACOS.md](MACOS.md).
+> **macOS:** the app adapts to the OS on its own (native titlebar with traffic lights + correct font
+> weight). To build the `.app`/`.dmg` — which can only be done on a Mac — see [MACOS.md](MACOS.md).
 
-- **Backend nativo** (`src-tauri/`): dos comandos `invoke` — `report()` y `content(file, session)` —
-  que envuelven la librería del parser (`arrow = { path = ".." }`, ver Arquitectura). El AppImage
-  corre standalone, leyendo `~/.claude/projects` directamente desde Rust.
-- **Footprint liviano**: Tauri usa el **webview nativo del sistema** (WebKitGTK en Linux), no
-  empaqueta un Chromium como Electron — así que la app vive en el orden de **~200 MB de RAM (PSS) en
-  uso**, una fracción de un cliente de escritorio Electron equivalente (que suele rondar varios GB).
-  El instalable pesa **~77 MB** (AppImage) / **~2 MB** (`.deb`).
-- **Refresco en vivo nativo**: un watcher `notify` sobre `~/.claude/projects` emite el evento
-  `report-changed` (con debounce) y la UI refresca al instante; se mantiene un polling lento como
-  fallback.
-- **Foco por sesión activa**: arriba se muestran el/los repo(s) de la **sesión activa** (la de
-  actividad más reciente) + cualquiera tocado en la misma ráfaga (~10 min, `BURST_WINDOW` en
-  `web/src/lib/time.ts`); el resto baja a *Other repos* a medida que envejece respecto a la activa.
-  El **punto verde** marca esos repos del foco con actividad reciente (se quitó el badge de texto
-  `live`, redundante). Honesto: "sesión activa" = *actividad más reciente en disco*, no *proceso en
-  ejecución* (arrow no puede saber lo segundo).
-- **Ventana y zoom**: titlebar propia (`decorations:false`) con botones minimizar/maximizar/cerrar,
-  arrastre y doble-click para maximizar — garantiza los controles *cross-distro* (en GNOME/Pop!_OS el
-  WM no los pinta de forma fiable). Zoom de UI estilo VSCode con `Ctrl +/−/0`: nativo del webview
-  (`setZoom`, no descoloca a CodeMirror), persistente entre sesiones.
-- **Linux/WebKitGTK**: la app fija `WEBKIT_DISABLE_DMABUF_RENDERER=1` en su `main()` (evita la
-  pantalla en blanco por DMABUF/NVIDIA); el bug de `font-weight` (+100) ya está compensado en
+- **Native backend** (`src-tauri/`): two `invoke` commands — `report()` and `content(file, session)`
+  — that wrap the parser library (`arrow = { path = ".." }`, see Architecture). The AppImage runs
+  standalone, reading `~/.claude/projects` directly from Rust.
+- **Lightweight footprint**: Tauri uses the **system's native webview** (WebKitGTK on Linux), it
+  does not bundle a Chromium like Electron — so the app lives on the order of **~200 MB of RAM (PSS)
+  in use**, a fraction of an equivalent Electron desktop client (which usually runs into several
+  GB). The installer weighs **~77 MB** (AppImage) / **~2 MB** (`.deb`).
+- **Native live refresh**: a `notify` watcher over `~/.claude/projects` emits a `report-changed`
+  event (debounced) and the UI refreshes instantly; a slow polling fallback is kept as a backstop.
+- **Active-session focus**: the repo(s) of the **active session** (the one with the most recent
+  activity) are shown at the top, plus any repo touched in the same burst (~10 min, `BURST_WINDOW`
+  in `web/src/lib/time.ts`); the rest sink into *Other repos* as they age relative to the active
+  one. The **green dot** marks those focused repos with recent activity (the redundant `live` text
+  badge was removed). Honest: "active session" = *most recent activity on disk*, not *a running
+  process* (arrow cannot know the latter).
+- **Window and zoom**: a custom titlebar (`decorations:false`) with minimize/maximize/close buttons,
+  drag, and double-click to maximize — guaranteeing *cross-distro* controls (on GNOME/Pop!_OS the WM
+  doesn't paint them reliably). VSCode-style UI zoom with `Ctrl +/−/0`: native to the webview
+  (`setZoom`, so it doesn't throw off CodeMirror), persistent across sessions.
+- **Linux/WebKitGTK**: the app sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` in its `main()` (avoids the
+  white screen caused by DMABUF/NVIDIA); the `font-weight` (+100) bug is already compensated in
   `web/src/app.css` (`font-weight: 350`).
 
-### Arquitectura (parser compartido, sin duplicar)
+### Architecture (shared parser, no duplication)
 
-El parser vive en una **librería** (`src/lib.rs`): funciones puras `build_report(projects_dir)` y
-`file_content(projects_dir, file, session)` + los structs serializables. La consumen dos frontends:
-`src/main.rs` (la CLI, flags intactos) y `src-tauri/` (el backend de escritorio). Cero lógica
-duplicada; la misma fuente de verdad para terminal, web y app nativa. El parser trae **9 tests
-unitarios** (`cargo test`) sobre transcripts-fixture en tempdir, que cubren lo no obvio: parsing
-defensivo, solo transcripts top-level, agrupación por raíz git, conteo `+/−`, filtro de `~/.claude/`
-y orden por recencia.
+The parser lives in a **library** (`src/lib.rs`): pure functions `build_report(projects_dir)` and
+`file_content(projects_dir, file, session)` + the serializable structs. Two frontends consume it:
+`src/main.rs` (the CLI, with flags intact) and `src-tauri/` (the desktop backend). Zero duplicated
+logic; the same source of truth for terminal, web, and native app. The parser ships **9 unit tests**
+(`cargo test`) over fixture transcripts in a tempdir, covering the non-obvious parts: defensive
+parsing, top-level transcripts only, grouping by git root, `+/−` counting, filtering of
+`~/.claude/`, and recency ordering.
 
 ## Roadmap
 
-- [x] **Fase 0** — parser nativo `JSONL → repo/sesión/archivo/diff`, salida en terminal y `--json`.
-- [x] **Fase 1** — UI web local (Vite + Svelte 5) consumiendo el parser: sidebar
-      `repo → sesión → archivos` (estilo Antigravity) + diff por archivo con
-      **CodeMirror 6 + `@codemirror/merge`**. (Solo lectura; la edición es Fase 4.)
-- [x] **Fase 2** — empaquetado en **Tauri 2.x** (`.deb` + AppImage). El parser de Rust se extrajo
-      a una **librería** (`src/lib.rs`) y es el backend nativo (sin sidecar); la CLI y la app lo
-      comparten. Frontend dual-mode (`invoke`/`fetch`), watcher `notify` → evento `report-changed`
-      para refresco en vivo, y mitigación WebKitGTK. (El foco del sidebar se refinó después a
-      "sesión activa + ráfaga ~10 min" con el punto verde como único indicador; ver ROADMAP.)
-- [ ] **Fase 3** — honestidad + git: toggle "git diff working tree", marcado de `userModified`,
-      timeline point-in-time reusando `file-history`.
-- [ ] **Fase 4** (postergado) — edición real con guardado a disco, integración GitHub (PRs/commits).
+- [x] **Phase 0** — native parser `JSONL → repo/session/file/diff`, terminal output and `--json`.
+- [x] **Phase 1** — local web UI (Vite + Svelte 5) consuming the parser: sidebar
+      `repo → session → files` (Antigravity-style) + per-file diff with
+      **CodeMirror 6 + `@codemirror/merge`**. (Read-only; editing is Phase 4.)
+- [x] **Phase 2** — packaging in **Tauri 2.x** (`.deb` + AppImage). The Rust parser was extracted
+      into a **library** (`src/lib.rs`) and is the native backend (no sidecar); the CLI and the app
+      share it. Dual-mode frontend (`invoke`/`fetch`), a `notify` watcher → `report-changed` event
+      for live refresh, and WebKitGTK mitigation. (The sidebar focus was later refined to
+      "active session + ~10 min burst" with the green dot as the sole indicator; see ROADMAP.)
+- [ ] **Phase 3** — honesty + git: a "git diff working tree" toggle, `userModified` marking, a
+      point-in-time timeline reusing `file-history`.
+- [ ] **Phase 4** (deferred) — real editing with save-to-disk, GitHub integration (PRs/commits).
 
-Seguimiento operativo, deuda técnica y backlog de ideas (búsqueda, stats, export, atajos):
-ver [ROADMAP.md](ROADMAP.md).
+Operational tracking, technical debt, and a backlog of ideas (search, stats, export, shortcuts):
+see [ROADMAP.md](ROADMAP.md). The data contract lives in [SPEC.md](SPEC.md).
 
 ## Stack
 
-Rust (parser/backend) · CodeMirror 6 (UI, Fase 1+) · Tauri 2.x (empaquetado, Fase 2+).
-Sobre Linux/WebKitGTK habrá que aplicar `WEBKIT_DISABLE_DMABUF_RENDERER=1` y compensar el
-bug de `font-weight` (+100) — ambos documentados para la Fase 2.
+Rust (parser/backend) · CodeMirror 6 (UI, Phase 1+) · Tauri 2.x (packaging, Phase 2+).
+On Linux/WebKitGTK you'll need to apply `WEBKIT_DISABLE_DMABUF_RENDERER=1` and compensate for the
+`font-weight` (+100) bug — both documented for Phase 2.
 
-## Licencia
+## Contributing
+
+Contributions are welcome — bug reports, ideas, and pull requests alike. Please read
+[CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test, and submit changes, and our
+[Code of Conduct](CODE_OF_CONDUCT.md). To report a security issue, see our
+[Security Policy](SECURITY.md). When in doubt, keep the product honest: arrow shows *edits via
+Claude's tools*, never *everything Claude did*.
+
+## License
 
 MIT.

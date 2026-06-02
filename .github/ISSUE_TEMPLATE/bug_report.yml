@@ -1,0 +1,122 @@
+name: Bug report
+description: Report something in arrow that is broken or behaving incorrectly.
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill out the fields below so we can reproduce the problem quickly.
+
+  - type: checkboxes
+    id: prechecks
+    attributes:
+      label: Before you start
+      description: Please confirm the following before opening the issue.
+      options:
+        - label: I searched the [existing issues](https://github.com/MrArcher23/arrow/issues) and did not find a duplicate.
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Is it really a missing file, or is it expected?
+
+        arrow only shows edits that went through Claude's **`Edit`**, **`Write`**, or **`MultiEdit`** tools.
+        Changes made by the session's **`Bash`** commands (`sed`, `prettier`, a build step, `mv`, `rm`, etc.)
+        are **not** captured in the native transcripts, so a file that looks "missing" may be working as
+        intended rather than a bug. Please confirm the change you expected to see actually went through a
+        Claude editing tool before reporting it as a bug.
+
+  - type: checkboxes
+    id: honesty-check
+    attributes:
+      label: Edit source
+      description: Only relevant if your report is about a file or change that arrow did not show.
+      options:
+        - label: The change I expected to see went through Claude's `Edit`, `Write`, or `MultiEdit` tools (not a `Bash` command), OR this bug is not about a missing file.
+          required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug, including what you expected to happen instead.
+      placeholder: |
+        What I did:
+        What I expected:
+        What actually happened:
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps to reproduce the behavior. Numbered steps are ideal.
+      placeholder: |
+        1. Open arrow / run `./target/release/arrow --list`
+        2. Select repo '...'
+        3. Select session '...'
+        4. See error
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install / run arrow?
+      options:
+        - .deb package
+        - AppImage
+        - Built from source (cargo tauri build / cargo build --release)
+        - Web dev server (npm run dev)
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system & desktop environment
+      description: Linux distro + window manager / desktop (e.g. Pop!_OS 22.04, GNOME / Pop Shell), or macOS version.
+      placeholder: "e.g. Pop!_OS 22.04, GNOME 42 (Pop Shell) — or macOS 14.5"
+    validations:
+      required: true
+
+  - type: input
+    id: arrow-version
+    attributes:
+      label: arrow version or commit
+      description: The release version or, if built from source, the short git commit hash (`git rev-parse --short HEAD`).
+      placeholder: "e.g. v0.1.0 or 2c8bdee"
+    validations:
+      required: true
+
+  - type: input
+    id: claude-code-version
+    attributes:
+      label: Claude Code version (if relevant)
+      description: Useful when the bug involves parsing transcripts, since the JSONL format changes between versions. Run `claude --version`.
+      placeholder: "e.g. 2.1.3"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: |
+        Paste any relevant terminal output, error messages, or screenshots. For parser issues, the output of
+        `./target/release/arrow --list` (or `--json`) is especially helpful. Do not paste private file contents.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Anything else that might help us understand the problem.
+    validations:
+      required: false

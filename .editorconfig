@@ -1,0 +1,24 @@
+# EditorConfig — https://editorconfig.org
+# Keeps indentation and whitespace consistent across editors for the whole repo.
+root = true
+
+# Defaults for every file.
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Rust uses 4-space indentation (rustfmt default).
+[*.rs]
+indent_size = 4
+
+# Frontend and config files: 2-space indentation.
+[*.{js,ts,svelte,json,css,html,yml,yaml}]
+indent_size = 2
+
+# Markdown: two trailing spaces mean a hard line break, so keep them.
+[*.md]
+trim_trailing_whitespace = false

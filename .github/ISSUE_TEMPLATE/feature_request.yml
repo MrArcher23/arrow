@@ -1,0 +1,63 @@
+name: Feature request
+description: Suggest an idea or improvement for arrow.
+title: "[feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing an idea. Before filing, please skim the [ROADMAP.md](https://github.com/MrArcher23/arrow/blob/main/ROADMAP.md)
+        — it lists the planned phases and a backlog of ideas that are not yet committed, so your request may
+        already be tracked there.
+
+  - type: checkboxes
+    id: prechecks
+    attributes:
+      label: Before you start
+      options:
+        - label: I searched the [existing issues](https://github.com/MrArcher23/arrow/issues) and the [ROADMAP.md](https://github.com/MrArcher23/arrow/blob/main/ROADMAP.md), and did not find this already proposed.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What problem does this solve? Describe the use case, not just the solution. "I'm frustrated when ..." is a good start.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: A clear and concise description of what you want to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions or workarounds you have considered.
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Mockups, links, or anything else that helps explain the request.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: honesty-principle
+    attributes:
+      label: Honesty principle
+      description: |
+        arrow's core constraint is honesty: it must never claim more than the native Claude Code data actually
+        knows. It only captures edits made via Claude's `Edit`/`Write`/`MultiEdit` tools (not `Bash` changes),
+        and "active session" means most recent activity on disk, not a running process.
+      options:
+        - label: This feature respects arrow's honesty principle — it does not require claiming more than the native data can prove.
+          required: true

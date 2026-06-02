@@ -48,7 +48,13 @@ empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web 
   `api.ts` cachea contenidos ya cargados (revisitas instantáneas) y purga el cache al cambiar el report.
 
 ## Convenciones
-- Comunícate en **español**; comentarios de código en español, identificadores en inglés.
+- Comunícate **conmigo (el usuario) en español**. En cambio, **el repo es público**: todo el texto
+  que vive en el código y de cara a colaboradores va en **inglés**.
+- **Comentarios de código en inglés** (de aquí en adelante; los comentarios legacy en español migran
+  gradualmente, sin reescribirlo todo de golpe), identificadores en inglés.
+- **Docs públicas y de contribución en inglés**: `README.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
+  `SECURITY.md` y las plantillas de `.github/`. Este `CLAUDE.md`, `ROADMAP.md`, `SPEC.md` y `MACOS.md`
+  siguen en español (son docs de trabajo del mantenedor).
 - **Texto visible en la UI en INGLÉS** (labels, estados, títulos, tooltips, banners). arrow es una
   app de marca inglesa. Ej: `live`, `History`, `Other repos`, `new file`, `5m ago`. Los strings de
   UI viven en los componentes Svelte y en `web/src/lib/time.ts` (tiempo relativo y buckets de fecha).

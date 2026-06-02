@@ -1,0 +1,120 @@
+name: CI
+
+# Runs on every push to main and on every pull request.
+# The repo is split into three independently checkable parts:
+#   - the root crate `arrow` (pure Rust parser/CLI, no system deps),
+#   - the web frontend (Svelte + Vite),
+#   - the Tauri backend in src-tauri/ (its OWN cargo workspace; needs WebKitGTK).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --- Root crate: format, lint and test the pure-Rust parser/CLI. ---
+  # No system dependencies: `cargo build` at the repo root pulls ONLY `arrow`
+  # (serde, serde_json, walkdir, anyhow, clap) and never the Tauri backend.
+  rust:
+    name: rust (parser/CLI)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --release
+
+  # --- Web frontend: install with the committed lockfile and build it. ---
+  web:
+    name: web (Svelte + Vite)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: web
+
+  # --- Tauri backend: compile-check only (no bundles; those live in release.yml). ---
+  # src-tauri/ is a SEPARATE cargo workspace, so we cd into it to build it.
+  # The frontend must be built first because tauri-build expects ../web/dist
+  # to exist (frontendDist in tauri.conf.json).
+  tauri-build:
+    name: tauri (backend compile-check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # src-tauri is its own workspace; cache it independently of the root crate.
+          workspaces: src-tauri
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Build frontend (needed for ../web/dist)
+        run: npm run build
+        working-directory: web
+
+      - name: Compile the Tauri backend
+        run: cargo build --release
+        working-directory: src-tauri
