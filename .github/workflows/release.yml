@@ -1,8 +1,8 @@
 name: Release
 
 # Triggered by pushing a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`).
-# Builds the desktop bundles with tauri-action and publishes a GitHub Release
-# with the artifacts (.deb + AppImage) attached.
+# Builds the desktop bundles with `cargo tauri build` (exactly like locally) and publishes a
+# GitHub Release with the artifacts (.deb + AppImage) attached.
 #
 # NOTE: this is conservative and Linux-only for now. macOS/Windows runners can be
 # added later via a build matrix (see tauri-action docs); each needs its own runner
@@ -58,17 +58,24 @@ jobs:
         run: npm ci
         working-directory: web
 
-      # tauri-action runs beforeBuildCommand (npm run build) from the frontend dir,
-      # builds the bundles, and creates/uploads the GitHub Release in one step.
-      - name: Build and release with tauri-action
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Build exactly like locally: `cargo tauri build` from the repo root. The Tauri CLI runs
+      # beforeBuildCommand (npm run build) from web/ — the frontend dir it derives from
+      # frontendDist (../web/dist) — so our web/ layout works. We do NOT use tauri-action
+      # because it runs npm from the repo root, where there is no package.json (it lives in web/).
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build the desktop bundles
+        run: cargo tauri build
+
+      - name: Publish the GitHub Release with the bundles
+        uses: softprops/action-gh-release@v2
         with:
-          # src-tauri/ is a separate workspace; point tauri-action at its config.
-          projectPath: src-tauri
-          tagName: ${{ github.ref_name }}
-          releaseName: "arrow ${{ github.ref_name }}"
-          releaseBody: "Desktop bundles (.deb + AppImage) for arrow ${{ github.ref_name }}. See the commit history for details."
-          releaseDraft: false
+          tag_name: ${{ github.ref_name }}
+          name: "arrow ${{ github.ref_name }}"
+          body: "Desktop bundles (.deb + AppImage) for arrow ${{ github.ref_name }}. See the commit history for details."
+          draft: false
           prerelease: false
+          files: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
