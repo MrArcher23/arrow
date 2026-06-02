@@ -4,8 +4,11 @@
 *¿qué archivos tocó Claude, en qué repo, con qué diff y en qué sesión?* — sin abrir un IDE,
 sin chat con IA, y **sin depender de git ni de hooks**.
 
-> Estado: **Fase 2** — app de escritorio (Tauri 2.x) con el parser de Rust como backend nativo.
-> Fases 0 (parser/CLI), 1 (UI web) y 2 (empaquetado) completas.
+> Estado: **Fase 2 completa + pulido** — app de escritorio (Tauri 2.x) con el parser de Rust como
+> backend nativo, **ya usable a diario** en Linux (`.deb` + AppImage). Fases 0 (parser/CLI), 1 (UI
+> web) y 2 (empaquetado) completas; post-Fase 2 se sumaron 9 tests del parser, watcher resiliente,
+> zoom, titlebar custom, foco por sesión activa y adaptación a macOS. Fases 3 (honestidad + git) y 4
+> (edición) pendientes — detalle en [ROADMAP.md](ROADMAP.md).
 
 ## Por qué existe
 
@@ -103,6 +106,10 @@ cargo tauri build
 - **Backend nativo** (`src-tauri/`): dos comandos `invoke` — `report()` y `content(file, session)` —
   que envuelven la librería del parser (`arrow = { path = ".." }`, ver Arquitectura). El AppImage
   corre standalone, leyendo `~/.claude/projects` directamente desde Rust.
+- **Footprint liviano**: Tauri usa el **webview nativo del sistema** (WebKitGTK en Linux), no
+  empaqueta un Chromium como Electron — así que la app vive en el orden de **~200 MB de RAM (PSS) en
+  uso**, una fracción de un cliente de escritorio Electron equivalente (que suele rondar varios GB).
+  El instalable pesa **~77 MB** (AppImage) / **~2 MB** (`.deb`).
 - **Refresco en vivo nativo**: un watcher `notify` sobre `~/.claude/projects` emite el evento
   `report-changed` (con debounce) y la UI refresca al instante; se mantiene un polling lento como
   fallback.
@@ -125,7 +132,10 @@ cargo tauri build
 El parser vive en una **librería** (`src/lib.rs`): funciones puras `build_report(projects_dir)` y
 `file_content(projects_dir, file, session)` + los structs serializables. La consumen dos frontends:
 `src/main.rs` (la CLI, flags intactos) y `src-tauri/` (el backend de escritorio). Cero lógica
-duplicada; la misma fuente de verdad para terminal, web y app nativa.
+duplicada; la misma fuente de verdad para terminal, web y app nativa. El parser trae **9 tests
+unitarios** (`cargo test`) sobre transcripts-fixture en tempdir, que cubren lo no obvio: parsing
+defensivo, solo transcripts top-level, agrupación por raíz git, conteo `+/−`, filtro de `~/.claude/`
+y orden por recencia.
 
 ## Roadmap
 
