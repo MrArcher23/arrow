@@ -9,6 +9,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch: # allow running the CI manually from the Actions tab
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
