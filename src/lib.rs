@@ -127,8 +127,10 @@ pub struct FileOut {
     pub removed: usize,
 }
 
-/// Salida del modo `--content`: el "antes" (primer originalFile de la sesión)
+/// Salida del modo `--content`: el "antes" (snapshot previo a la primera edición
+/// de la sesión: `originalFile` inline o, si vino `null`, el último `Read` completo)
 /// y el "después" (archivo actual en disco), para alimentar @codemirror/merge.
+/// `before_available = false` cuando no se pudo recuperar ninguna fuente del "antes".
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContentOut {
@@ -153,8 +155,37 @@ pub fn build_report(projects_dir: &str) -> ReportOut {
     build_report_from(projects_dir, &collected.repos, &collected.metas)
 }
 
-/// Reúne el "antes" (primer `originalFile` de la sesión para ese archivo) y el
-/// "después" (archivo actual en disco) de UN archivo, para la vista de diff.
+/// Mutable accumulator used while scanning a session for one file's "before".
+///
+/// `before` resolves to the file's content right before the session's FIRST
+/// tool-edit. `None` means we couldn't recover it — the UI must then say so
+/// instead of pretending the file is new (honesty principle).
+#[derive(Default)]
+struct BeforeScan {
+    /// Reconstructed "before" content, or `None` when unknown.
+    before: Option<String>,
+    /// Frozen once the first edit of the target is seen (so `before` is the
+    /// pre-session state, not a later edit's snapshot).
+    locked: bool,
+    /// Newest FULL `Read` snapshot of the target seen before the first edit.
+    /// Used as a fallback when the edit record carries `originalFile: null`:
+    /// Claude Code omits the inline original on some edits even though a
+    /// `structuredPatch` is present (verified on v2.1.x), which otherwise made
+    /// arrow render an existing file as a brand-new one.
+    pending_read: Option<String>,
+    ops: usize,
+    user_modified: bool,
+}
+
+/// Reúne el "antes" y el "después" (archivo actual en disco) de UN archivo, para
+/// la vista de diff.
+///
+/// El "antes" es el contenido del archivo justo antes de la PRIMERA edición de la
+/// sesión. Fuente preferida: el `originalFile` inline de ese primer Edit. Cuando
+/// Claude Code lo emite como `null` (pasa en parte de los Edit aunque haya
+/// `structuredPatch`), se usa como respaldo el último snapshot de un `Read`
+/// COMPLETO del mismo archivo en la sesión. Si no hay ninguna fuente, el "antes"
+/// queda como NO disponible (`before_available = false`) en vez de fingir vacío.
 ///
 /// Recorre SOLO transcripts de PRIMER NIVEL (igual que `collect`/el report; los
 /// `.jsonl` anidados de subagentes se ignoran). Cuando se indica `session`, abre
@@ -166,9 +197,7 @@ pub fn file_content(projects_dir: &str, file: &str, session: Option<&str>) -> Co
     let target = file.to_string();
     let projects_path = Path::new(projects_dir);
 
-    let mut before: Option<String> = None;
-    let mut ops = 0usize;
-    let mut user_modified = false;
+    let mut scan = BeforeScan::default();
 
     for entry in WalkDir::new(projects_dir)
         .into_iter()
@@ -194,14 +223,7 @@ pub fn file_content(projects_dir: &str, file: &str, session: Option<&str>) -> Co
                 continue;
             }
         }
-        scan_transcript(
-            path,
-            &target,
-            session,
-            &mut before,
-            &mut ops,
-            &mut user_modified,
-        );
+        scan_transcript(path, &target, session, &mut scan);
     }
 
     let (after, after_available) = match std::fs::read_to_string(&target) {
@@ -209,33 +231,33 @@ pub fn file_content(projects_dir: &str, file: &str, session: Option<&str>) -> Co
         Err(_) => (String::new(), false),
     };
 
+    let before_available = scan.before.is_some();
     ContentOut {
         file: target,
         session: session.map(str::to_string),
-        before_available: before.is_some(),
-        before: before.unwrap_or_default(),
+        before_available,
+        before: scan.before.unwrap_or_default(),
         after,
         after_available,
-        user_modified,
-        ops,
+        user_modified: scan.user_modified,
+        ops: scan.ops,
     }
 }
 
-/// Escanea un transcript acumulando el "antes" (primer `originalFile`), el nº de
-/// `ops` y el flag `userModified` para `target`. Filtra por `session` (prefijo) si
-/// se da. La lógica de extracción es idéntica a la del barrido original.
-fn scan_transcript(
-    path: &Path,
-    target: &str,
-    session: Option<&str>,
-    before: &mut Option<String>,
-    ops: &mut usize,
-    user_modified: &mut bool,
-) {
+/// Escanea un transcript acumulando, para `target`: el "antes", el nº de `ops` y
+/// el flag `userModified`. Filtra por `session` (prefijo) si se da.
+///
+/// Mira dos clases de record: los `Read` (cuyo snapshot completo es un respaldo
+/// del "antes") y los Edit/Write/MultiEdit (que aportan `originalFile`, cuentan
+/// como `ops` y, en el primero, congelan el "antes").
+fn scan_transcript(path: &Path, target: &str, session: Option<&str>, scan: &mut BeforeScan) {
     let f = match File::open(path) {
         Ok(f) => f,
         Err(_) => return,
     };
+    // Reads only back an edit within the SAME transcript (= same session), so a
+    // pending snapshot must not leak across files when `session` is None.
+    scan.pending_read = None;
     for line in BufReader::new(f).lines().map_while(std::result::Result::ok) {
         if line.trim().is_empty() {
             continue;
@@ -248,32 +270,70 @@ fn scan_transcript(
             Some(t) if t.is_object() => t,
             _ => continue,
         };
-        if tur.get("filePath").and_then(Value::as_str) != Some(target) {
-            continue;
-        }
+        // Session filter (prefix), applied to BOTH Read and Edit records.
         if let Some(sf) = session {
             let sid = v.get("sessionId").and_then(Value::as_str).unwrap_or("");
             if !sid.starts_with(sf) {
                 continue;
             }
         }
-        *ops += 1;
-        if before.is_none() {
-            *before = Some(
-                tur.get("originalFile")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-            );
+        // (1) Read of the target: remember its full-file snapshot as a candidate
+        //     "before" (only used if the upcoming edit lacks an inline original).
+        if !scan.locked {
+            if let Some(content) = read_snapshot(tur, target) {
+                scan.pending_read = Some(content);
+            }
         }
+        // (2) Edit/Write/MultiEdit of the target (top-level `filePath`).
+        if tur.get("filePath").and_then(Value::as_str) != Some(target) {
+            continue;
+        }
+        scan.ops += 1;
         if tur
             .get("userModified")
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            *user_modified = true;
+            scan.user_modified = true;
+        }
+        if !scan.locked {
+            // Prefer the edit's own inline original; fall back to the last full
+            // Read snapshot when Claude Code emitted `originalFile: null`. If
+            // neither exists, `before` stays None (honestly "unavailable").
+            scan.before = match tur.get("originalFile").and_then(Value::as_str) {
+                Some(s) => Some(s.to_string()),
+                None => scan.pending_read.take(),
+            };
+            scan.locked = true;
         }
     }
+}
+
+/// If `tur` is a `Read` result for `target` covering the WHOLE file, returns its
+/// captured content. A `Read` result is `{ file: { filePath, content, startLine,
+/// numLines, totalLines }, type: "text" }`. We reject offset/truncated reads
+/// (`startLine > 1` or `numLines != totalLines`): a partial snapshot would yield a
+/// wrong "before" and spurious diff lines, so we'd rather report it unavailable.
+fn read_snapshot(tur: &Value, target: &str) -> Option<String> {
+    let file = tur.get("file")?;
+    if file.get("filePath").and_then(Value::as_str) != Some(target) {
+        return None;
+    }
+    let start = file.get("startLine").and_then(Value::as_i64).unwrap_or(1);
+    let full = start <= 1
+        && match (
+            file.get("numLines").and_then(Value::as_i64),
+            file.get("totalLines").and_then(Value::as_i64),
+        ) {
+            (Some(n), Some(t)) => n == t,
+            _ => true, // fields absent: assume the read covers the file
+        };
+    if !full {
+        return None;
+    }
+    file.get("content")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// Recorre los transcripts de primer nivel de `projects_dir` y acumula el modelo.
@@ -899,5 +959,168 @@ mod tests {
         assert!(!out.after_available);
         assert_eq!(out.ops, 0);
         assert_eq!(out.after, "");
+    }
+
+    // Edit record whose `originalFile` is JSON `null` (Claude Code emits this on
+    // some edits even though a `structuredPatch` is present).
+    fn edit_record_null_original(
+        sid: &str,
+        cwd: &str,
+        file_path: &str,
+        ts: &str,
+        patch_lines: &[&str],
+    ) -> String {
+        json!({
+            "type": "user",
+            "sessionId": sid,
+            "cwd": cwd,
+            "gitBranch": "main",
+            "timestamp": ts,
+            "toolUseResult": {
+                "filePath": file_path,
+                "userModified": false,
+                "originalFile": null,
+                "structuredPatch": [{
+                    "oldStart": 1, "oldLines": 1, "newStart": 1, "newLines": patch_lines.len(),
+                    "lines": patch_lines,
+                }],
+            }
+        })
+        .to_string()
+    }
+
+    // Read result record: `{ file: { filePath, content, startLine, numLines,
+    // totalLines }, type: "text" }`. `num`/`total` let a test simulate a full vs
+    // truncated read.
+    fn read_record(
+        sid: &str,
+        cwd: &str,
+        file_path: &str,
+        ts: &str,
+        content: &str,
+        num: i64,
+        total: i64,
+    ) -> String {
+        json!({
+            "type": "user",
+            "sessionId": sid,
+            "cwd": cwd,
+            "timestamp": ts,
+            "toolUseResult": {
+                "type": "text",
+                "file": {
+                    "filePath": file_path,
+                    "content": content,
+                    "startLine": 1,
+                    "numLines": num,
+                    "totalLines": total,
+                },
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn file_content_usa_snapshot_del_read_si_originalfile_es_null() {
+        let dir = tmpdir("readfallback");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("Comp.tsx");
+        fs::write(&file, "line A\nEDITED\nline C\n").unwrap();
+        let fp = file.to_str().unwrap();
+
+        // Read (full) then Edit with originalFile:null, in chronological order.
+        let read = read_record(
+            "s1",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-06-02T00:00:00Z",
+            "line A\nline B\nline C\n",
+            3,
+            3,
+        );
+        let edit = edit_record_null_original(
+            "s1",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-06-02T00:01:00Z",
+            &["-line B", "+EDITED"],
+        );
+        write_top_level(&dir, "proj", "s1", &[read, edit]);
+
+        let out = file_content(dir.to_str().unwrap(), fp, Some("s1"));
+        assert!(
+            out.before_available,
+            "el snapshot del Read debe rellenar el before cuando originalFile es null"
+        );
+        assert_eq!(out.before, "line A\nline B\nline C\n");
+        assert_eq!(out.after, "line A\nEDITED\nline C\n");
+        assert_eq!(out.ops, 1, "solo el Edit cuenta como op (el Read no)");
+    }
+
+    #[test]
+    fn file_content_before_no_disponible_sin_originalfile_ni_read() {
+        let dir = tmpdir("nobefore");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("Comp.tsx");
+        fs::write(&file, "x\n").unwrap();
+        let fp = file.to_str().unwrap();
+
+        // Edit con originalFile:null y SIN Read previo: el before es desconocido.
+        // Honestidad: before_available = false (no fingir "new file").
+        let edit = edit_record_null_original(
+            "s1",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-06-02T00:00:00Z",
+            &["+x"],
+        );
+        write_top_level(&dir, "proj", "s1", &[edit]);
+
+        let out = file_content(dir.to_str().unwrap(), fp, Some("s1"));
+        assert!(
+            !out.before_available,
+            "sin fuente, el before es NO disponible"
+        );
+        assert_eq!(out.before, "");
+        assert!(out.after_available);
+        assert_eq!(out.ops, 1);
+    }
+
+    #[test]
+    fn file_content_ignora_read_truncado_como_before() {
+        let dir = tmpdir("truncread");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("Big.tsx");
+        fs::write(&file, "full file on disk\n").unwrap();
+        let fp = file.to_str().unwrap();
+
+        // Read truncado (numLines != totalLines): NO sirve de before. Como el Edit
+        // trae originalFile:null y no hay otro Read completo, before queda no disponible.
+        let read = read_record(
+            "s1",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-06-02T00:00:00Z",
+            "only first 100 lines...\n",
+            100,
+            500,
+        );
+        let edit = edit_record_null_original(
+            "s1",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-06-02T00:01:00Z",
+            &["+x"],
+        );
+        write_top_level(&dir, "proj", "s1", &[read, edit]);
+
+        let out = file_content(dir.to_str().unwrap(), fp, Some("s1"));
+        assert!(
+            !out.before_available,
+            "un Read truncado no debe usarse como before"
+        );
     }
 }

@@ -67,12 +67,20 @@
   }
 
   // Clasifica el cambio para no partir la pantalla cuando no hay nada que comparar.
-  function classify(c: FileContent | null): 'none' | 'created' | 'deleted' | 'diff' {
+  // 'unknown' = there's no recorded prior state (the edit lacked an inline original
+  // and no full Read snapshot exists): we show the current file but must NOT claim
+  // it's new — honesty over a tidy two-column view.
+  function classify(c: FileContent | null): 'none' | 'created' | 'deleted' | 'diff' | 'unknown' {
     if (!c) return 'none'
     const b = c.before ?? ''
     const a = c.after ?? ''
-    if (a === '' && b !== '') return 'deleted'
-    if (b === '') return 'created'
+    // No "before" recorded: never pretend the file is new. Show the current file
+    // if we have it, otherwise nothing.
+    if (!c.beforeAvailable) return c.afterAvailable ? 'unknown' : 'none'
+    // We have a "before". If the file is gone from disk, it was deleted.
+    if (!c.afterAvailable) return b === '' ? 'none' : 'deleted'
+    // Both sides present.
+    if (b === '') return a === '' ? 'none' : 'created'
     return 'diff'
   }
 
@@ -221,6 +229,8 @@
     <div class="banner created">＋ new file</div>
   {:else if mode === 'deleted'}
     <div class="banner deleted">－ deleted file</div>
+  {:else if mode === 'unknown'}
+    <div class="banner unknown">⚠ no prior snapshot for this edit — showing the current file</div>
   {/if}
 
   {#if searchOpen}
@@ -250,14 +260,16 @@
     </div>
   {/if}
 
-  <div class="diff-host" class:single={mode === 'created' || mode === 'deleted'} bind:this={host}></div>
+  <div
+    class="diff-host"
+    class:single={mode === 'created' || mode === 'deleted' || mode === 'unknown'}
+    bind:this={host}
+  ></div>
 
   {#if loading}
     <div class="status">Loading diff…</div>
   {:else if !content}
     <div class="status">Select a file in the sidebar to view its diff.</div>
-  {:else if mode === 'diff' && !content.beforeAvailable}
-    <div class="status">No previous state recorded for this file in this session.</div>
   {/if}
 </div>
 
@@ -282,6 +294,10 @@
   .banner.deleted {
     color: var(--red);
     background: #f851490f;
+  }
+  .banner.unknown {
+    color: #d29922;
+    background: #d299220f;
   }
   .diff-host {
     flex: 1;
