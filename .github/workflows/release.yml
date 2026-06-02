@@ -20,7 +20,13 @@ permissions:
 jobs:
   release:
     name: Build bundles and publish release
-    runs-on: ubuntu-latest
+    # Pin to the OLDEST supported Ubuntu (glibc 2.35), NOT ubuntu-latest. glibc is
+    # not forward-compatible: a binary linked against a newer glibc (ubuntu-latest
+    # is 24.04 → glibc 2.39) fails at startup on older distros with
+    # `version 'GLIBC_2.xx' not found`. Building on 22.04 lets the .deb/AppImage run
+    # on glibc >= 2.35 (Ubuntu 22.04, Pop!_OS 22.04, Debian 12, …). 22.04 still ships
+    # libwebkit2gtk-4.1-dev, which Tauri 2 needs. Do NOT bump this to ubuntu-latest.
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
