@@ -127,10 +127,10 @@ pub struct FileOut {
     pub removed: usize,
 }
 
-/// Salida del modo `--content`: el "antes" (snapshot previo a la primera edición
-/// de la sesión: `originalFile` inline o, si vino `null`, el último `Read` completo)
-/// y el "después" (archivo actual en disco), para alimentar @codemirror/merge.
-/// `before_available = false` cuando no se pudo recuperar ninguna fuente del "antes".
+/// Salida del modo `--content`: el "antes" (estado previo a la primera edición de
+/// la sesión, ver [`resolve_before`]) y el "después" (archivo actual en disco),
+/// para alimentar @codemirror/merge.
+/// `before_available = false` cuando no se pudo recuperar/reconstruir el "antes".
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContentOut {
@@ -155,24 +155,30 @@ pub fn build_report(projects_dir: &str) -> ReportOut {
     build_report_from(projects_dir, &collected.repos, &collected.metas)
 }
 
-/// Mutable accumulator used while scanning a session for one file's "before".
+/// One target edit captured during a session scan: the inline `originalFile`
+/// snapshot (if Claude Code emitted it) and the patch hunks. Together these let
+/// us reconstruct the "before" even when the first edit lacks an inline original.
+struct EditRec {
+    original: Option<String>,
+    hunks: Vec<Hunk>,
+}
+
+/// Mutable accumulator used while scanning a session for one file's history.
 ///
-/// `before` resolves to the file's content right before the session's FIRST
-/// tool-edit. `None` means we couldn't recover it — the UI must then say so
-/// instead of pretending the file is new (honesty principle).
+/// The "before" (state prior to the session's FIRST edit) is resolved later by
+/// [`resolve_before`] from these fields; `None` there means we couldn't recover
+/// it — the UI must then say so instead of pretending the file is new (honesty).
 #[derive(Default)]
 struct BeforeScan {
-    /// Reconstructed "before" content, or `None` when unknown.
-    before: Option<String>,
-    /// Frozen once the first edit of the target is seen (so `before` is the
-    /// pre-session state, not a later edit's snapshot).
-    locked: bool,
-    /// Newest FULL `Read` snapshot of the target seen before the first edit.
-    /// Used as a fallback when the edit record carries `originalFile: null`:
-    /// Claude Code omits the inline original on some edits even though a
-    /// `structuredPatch` is present (verified on v2.1.x), which otherwise made
-    /// arrow render an existing file as a brand-new one.
+    /// All edits of the target in the session, in chronological order.
+    edits: Vec<EditRec>,
+    /// Newest FULL `Read` snapshot of the target captured BEFORE the first edit
+    /// (a good "before" when the first edit's `originalFile` is `null`).
+    read_before: Option<String>,
+    /// Working slot: newest full `Read` so far, frozen into `read_before` at the
+    /// first edit.
     pending_read: Option<String>,
+    first_edit_seen: bool,
     ops: usize,
     user_modified: bool,
 }
@@ -181,11 +187,13 @@ struct BeforeScan {
 /// la vista de diff.
 ///
 /// El "antes" es el contenido del archivo justo antes de la PRIMERA edición de la
-/// sesión. Fuente preferida: el `originalFile` inline de ese primer Edit. Cuando
-/// Claude Code lo emite como `null` (pasa en parte de los Edit aunque haya
-/// `structuredPatch`), se usa como respaldo el último snapshot de un `Read`
-/// COMPLETO del mismo archivo en la sesión. Si no hay ninguna fuente, el "antes"
-/// queda como NO disponible (`before_available = false`) en vez de fingir vacío.
+/// sesión, resuelto por [`resolve_before`] en cascada (la fuente más fiable
+/// primero): `originalFile` inline del primer Edit → snapshot exacto más temprano
+/// (un `originalFile` posterior o un `Read` completo) reaplicando en reversa las
+/// ediciones previas → `Read` completo → reaplicar en reversa TODAS las ediciones
+/// sobre el `after` de disco. Cada reconstrucción se VERIFICA contra el contenido;
+/// si nada cuadra, el "antes" queda NO disponible (`before_available = false`) en
+/// vez de fingir vacío o inventar un diff.
 ///
 /// Recorre SOLO transcripts de PRIMER NIVEL (igual que `collect`/el report; los
 /// `.jsonl` anidados de subagentes se ignoran). Cuando se indica `session`, abre
@@ -231,12 +239,13 @@ pub fn file_content(projects_dir: &str, file: &str, session: Option<&str>) -> Co
         Err(_) => (String::new(), false),
     };
 
-    let before_available = scan.before.is_some();
+    let before = resolve_before(&scan.edits, scan.read_before.as_deref(), &after);
+    let before_available = before.is_some();
     ContentOut {
         file: target,
         session: session.map(str::to_string),
         before_available,
-        before: scan.before.unwrap_or_default(),
+        before: before.unwrap_or_default(),
         after,
         after_available,
         user_modified: scan.user_modified,
@@ -244,12 +253,12 @@ pub fn file_content(projects_dir: &str, file: &str, session: Option<&str>) -> Co
     }
 }
 
-/// Escanea un transcript acumulando, para `target`: el "antes", el nº de `ops` y
-/// el flag `userModified`. Filtra por `session` (prefijo) si se da.
+/// Escanea un transcript acumulando, para `target`: las ediciones (con su
+/// `originalFile` y hunks), el último `Read` completo previo a la 1ª edición, el
+/// nº de `ops` y el flag `userModified`. Filtra por `session` (prefijo) si se da.
 ///
-/// Mira dos clases de record: los `Read` (cuyo snapshot completo es un respaldo
-/// del "antes") y los Edit/Write/MultiEdit (que aportan `originalFile`, cuentan
-/// como `ops` y, en el primero, congelan el "antes").
+/// Mira dos clases de record: los `Read` (cuyo snapshot completo respalda el
+/// "antes") y los Edit/Write/MultiEdit (que aportan `originalFile` + hunks).
 fn scan_transcript(path: &Path, target: &str, session: Option<&str>, scan: &mut BeforeScan) {
     let f = match File::open(path) {
         Ok(f) => f,
@@ -277,9 +286,9 @@ fn scan_transcript(path: &Path, target: &str, session: Option<&str>, scan: &mut 
                 continue;
             }
         }
-        // (1) Read of the target: remember its full-file snapshot as a candidate
-        //     "before" (only used if the upcoming edit lacks an inline original).
-        if !scan.locked {
+        // (1) Read of the target: remember its full-file snapshot (only matters
+        //     until the first edit, which freezes it into `read_before`).
+        if !scan.first_edit_seen {
             if let Some(content) = read_snapshot(tur, target) {
                 scan.pending_read = Some(content);
             }
@@ -287,6 +296,10 @@ fn scan_transcript(path: &Path, target: &str, session: Option<&str>, scan: &mut 
         // (2) Edit/Write/MultiEdit of the target (top-level `filePath`).
         if tur.get("filePath").and_then(Value::as_str) != Some(target) {
             continue;
+        }
+        if !scan.first_edit_seen {
+            scan.read_before = scan.pending_read.take();
+            scan.first_edit_seen = true;
         }
         scan.ops += 1;
         if tur
@@ -296,16 +309,14 @@ fn scan_transcript(path: &Path, target: &str, session: Option<&str>, scan: &mut 
         {
             scan.user_modified = true;
         }
-        if !scan.locked {
-            // Prefer the edit's own inline original; fall back to the last full
-            // Read snapshot when Claude Code emitted `originalFile: null`. If
-            // neither exists, `before` stays None (honestly "unavailable").
-            scan.before = match tur.get("originalFile").and_then(Value::as_str) {
-                Some(s) => Some(s.to_string()),
-                None => scan.pending_read.take(),
-            };
-            scan.locked = true;
-        }
+        let original = tur
+            .get("originalFile")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        scan.edits.push(EditRec {
+            original,
+            hunks: parse_hunks(tur),
+        });
     }
 }
 
@@ -334,6 +345,118 @@ fn read_snapshot(tur: &Value, target: &str) -> Option<String> {
     file.get("content")
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+/// Parses `toolUseResult.structuredPatch` into hunks. Defensive: a missing or
+/// malformed patch yields an empty vec.
+fn parse_hunks(tur: &Value) -> Vec<Hunk> {
+    let arr = match tur.get("structuredPatch").and_then(Value::as_array) {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    arr.iter()
+        .map(|h| Hunk {
+            old_start: h.get("oldStart").and_then(Value::as_i64).unwrap_or(0),
+            old_lines: h.get("oldLines").and_then(Value::as_i64).unwrap_or(0),
+            new_start: h.get("newStart").and_then(Value::as_i64).unwrap_or(0),
+            new_lines: h.get("newLines").and_then(Value::as_i64).unwrap_or(0),
+            lines: h
+                .get("lines")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|l| l.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// Resolves the file's "before" (state prior to the session's FIRST edit) from
+/// the captured `edits`, an optional full `Read` snapshot, and the on-disk
+/// `after`. Most authoritative source first; every reconstruction is
+/// context-verified by [`reverse_apply`] and yields `None` on mismatch, so we
+/// never show an invented "before". `None` overall means honestly "unavailable".
+fn resolve_before(edits: &[EditRec], read_before: Option<&str>, after: &str) -> Option<String> {
+    // 1. The first edit already carries the exact pre-edit content.
+    if let Some(first) = edits.first() {
+        if let Some(orig) = &first.original {
+            return Some(orig.clone());
+        }
+    }
+    // 2. Earliest LATER inline snapshot (F_k) → reverse the k edits before it.
+    //    Handles a first edit whose `originalFile` came back `null`.
+    for k in 1..edits.len() {
+        if let Some(anchor) = edits[k].original.as_deref() {
+            if let Some(before) = reverse_apply(anchor, &edits[..k]) {
+                return Some(before);
+            }
+            break; // anchor found but reconstruction failed; fall through
+        }
+    }
+    // 3. A full Read snapshot captured before the first edit (≈ pre-edit state).
+    if let Some(r) = read_before {
+        return Some(r.to_string());
+    }
+    // 4. Last resort: undo EVERY edit from the current disk content. Only when at
+    //    least one edit has hunks (otherwise we'd just echo `after`).
+    if edits.iter().any(|e| !e.hunks.is_empty()) {
+        if let Some(before) = reverse_apply(after, edits) {
+            return Some(before);
+        }
+    }
+    None
+}
+
+/// Reverse-applies `edits` (chronological — each transforms F_i → F_{i+1}) onto
+/// `anchor` (the content AFTER the last edit in the slice, i.e. F_n), returning
+/// the content BEFORE the first edit (F_0).
+///
+/// Each hunk is verified against the current reconstruction; any mismatch (drift,
+/// stale disk, a non-tool edit in between) returns `None` so the caller can fall
+/// back rather than show a wrong "before". Patch line prefixes: ' ' context, '+'
+/// added (after only), '-' removed (before only); a leading '\' is the
+/// "No newline at end of file" marker and is ignored.
+fn reverse_apply(anchor: &str, edits: &[EditRec]) -> Option<String> {
+    // `split('\n')` keeps a trailing "" when the content ends in a newline, and
+    // `join("\n")` restores it exactly.
+    let mut lines: Vec<String> = anchor.split('\n').map(str::to_string).collect();
+    for edit in edits.iter().rev() {
+        // Highest newStart first, so earlier splices don't shift later indices
+        // within the same edit.
+        let mut hunks: Vec<&Hunk> = edit.hunks.iter().collect();
+        hunks.sort_by_key(|h| std::cmp::Reverse(h.new_start));
+        for h in hunks {
+            if h.new_start < 1 {
+                return None;
+            }
+            let start = (h.new_start - 1) as usize;
+            // Build the hunk's "after" view (context + added) and "before" view
+            // (context + removed) from the prefixed patch lines.
+            let mut after_view: Vec<String> = Vec::new();
+            let mut before_view: Vec<String> = Vec::new();
+            for l in &h.lines {
+                match l.as_bytes().first() {
+                    Some(b'+') => after_view.push(l[1..].to_string()),
+                    Some(b'-') => before_view.push(l[1..].to_string()),
+                    Some(b'\\') => {} // "\ No newline at end of file": ignore
+                    _ => {
+                        // Context line: one leading space (or a blank line).
+                        let c = l.strip_prefix(' ').unwrap_or(l);
+                        after_view.push(c.to_string());
+                        before_view.push(c.to_string());
+                    }
+                }
+            }
+            let end = start + after_view.len();
+            if end > lines.len() || lines[start..end] != after_view[..] {
+                return None; // the hunk doesn't line up: bail honestly
+            }
+            lines.splice(start..end, before_view);
+        }
+    }
+    Some(lines.join("\n"))
 }
 
 /// Recorre los transcripts de primer nivel de `projects_dir` y acumula el modelo.
@@ -506,32 +629,15 @@ fn ingest(
         fc.user_modified = true;
     }
 
-    if let Some(arr) = tur.get("structuredPatch").and_then(Value::as_array) {
-        for h in arr {
-            let lines: Vec<String> = h
-                .get("lines")
-                .and_then(Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|l| l.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            for l in &lines {
-                match l.as_bytes().first() {
-                    Some(b'+') => fc.added += 1,
-                    Some(b'-') => fc.removed += 1,
-                    _ => {}
-                }
+    for h in parse_hunks(tur) {
+        for l in &h.lines {
+            match l.as_bytes().first() {
+                Some(b'+') => fc.added += 1,
+                Some(b'-') => fc.removed += 1,
+                _ => {}
             }
-            fc.hunks.push(Hunk {
-                old_start: h.get("oldStart").and_then(Value::as_i64).unwrap_or(0),
-                old_lines: h.get("oldLines").and_then(Value::as_i64).unwrap_or(0),
-                new_start: h.get("newStart").and_then(Value::as_i64).unwrap_or(0),
-                new_lines: h.get("newLines").and_then(Value::as_i64).unwrap_or(0),
-                lines,
-            });
         }
+        fc.hunks.push(h);
     }
 }
 
@@ -1058,34 +1164,142 @@ mod tests {
         assert_eq!(out.ops, 1, "solo el Edit cuenta como op (el Read no)");
     }
 
+    // Realistic single-hunk edit. `original` -> originalFile (None = JSON null).
+    // oldLines/newLines are derived from the prefixed `lines` so the patch is
+    // internally consistent (context ' ' counts in both, '-' only old, '+' only new).
+    #[allow(clippy::too_many_arguments)] // a focused test fixture builder
+    fn edit_hunk(
+        sid: &str,
+        cwd: &str,
+        fp: &str,
+        ts: &str,
+        original: Option<&str>,
+        old_start: i64,
+        new_start: i64,
+        lines: &[&str],
+    ) -> String {
+        let old_lines = lines.iter().filter(|l| !l.starts_with('+')).count();
+        let new_lines = lines.iter().filter(|l| !l.starts_with('-')).count();
+        let of = match original {
+            Some(s) => json!(s),
+            None => Value::Null,
+        };
+        json!({
+            "type": "user", "sessionId": sid, "cwd": cwd, "gitBranch": "main", "timestamp": ts,
+            "toolUseResult": {
+                "filePath": fp, "userModified": false, "originalFile": of,
+                "structuredPatch": [{
+                    "oldStart": old_start, "oldLines": old_lines,
+                    "newStart": new_start, "newLines": new_lines, "lines": lines,
+                }],
+            }
+        })
+        .to_string()
+    }
+
     #[test]
-    fn file_content_before_no_disponible_sin_originalfile_ni_read() {
-        let dir = tmpdir("nobefore");
+    fn file_content_reconstruye_before_revirtiendo_patch_desde_disco() {
+        let dir = tmpdir("reverse_disk");
         let repo = dir.join("repo");
         fs::create_dir_all(repo.join(".git")).unwrap();
         let file = repo.join("Comp.tsx");
-        fs::write(&file, "x\n").unwrap();
+        // F0 (pre-edición) = "a\nB\nc\n"; en disco quedó "a\nX\nc\n".
+        fs::write(&file, "a\nX\nc\n").unwrap();
         let fp = file.to_str().unwrap();
-
-        // Edit con originalFile:null y SIN Read previo: el before es desconocido.
-        // Honestidad: before_available = false (no fingir "new file").
-        let edit = edit_record_null_original(
+        // Edit con originalFile:null y SIN Read: el before se reconstruye revirtiendo
+        // el structuredPatch sobre el contenido de disco.
+        let edit = edit_hunk(
             "s1",
             repo.to_str().unwrap(),
             fp,
             "2026-06-02T00:00:00Z",
-            &["+x"],
+            None,
+            1,
+            1,
+            &[" a", "-B", "+X", " c"],
+        );
+        write_top_level(&dir, "proj", "s1", &[edit]);
+
+        let out = file_content(dir.to_str().unwrap(), fp, Some("s1"));
+        assert!(
+            out.before_available,
+            "reverse-apply debe reconstruir el before desde disco"
+        );
+        assert_eq!(out.before, "a\nB\nc\n");
+        assert_eq!(out.after, "a\nX\nc\n");
+        assert_eq!(out.ops, 1);
+    }
+
+    #[test]
+    fn file_content_reconstruye_before_anclando_en_un_original_posterior() {
+        // Caso StatsUI: la 1ª edición trae originalFile:null, pero una posterior sí
+        // trae un snapshot exacto; se ancla ahí y se revierten las ediciones previas.
+        let dir = tmpdir("reverse_anchor");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("Comp.tsx");
+        fs::write(&file, "L1\nL2x\nL3y\n").unwrap(); // F2 (disco)
+        let fp = file.to_str().unwrap();
+        // edit1: L2 -> L2x (originalFile null). edit2: L3 -> L3y (originalFile = F1).
+        let e1 = edit_hunk(
+            "s1",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-06-02T00:00:00Z",
+            None,
+            1,
+            1,
+            &[" L1", "-L2", "+L2x", " L3"],
+        );
+        let e2 = edit_hunk(
+            "s1",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-06-02T00:01:00Z",
+            Some("L1\nL2x\nL3\n"),
+            1,
+            1,
+            &[" L1", " L2x", "-L3", "+L3y"],
+        );
+        write_top_level(&dir, "proj", "s1", &[e1, e2]);
+
+        let out = file_content(dir.to_str().unwrap(), fp, Some("s1"));
+        assert!(out.before_available);
+        assert_eq!(
+            out.before, "L1\nL2\nL3\n",
+            "before = pre-sesión, revirtiendo edit1 desde el snapshot exacto de edit2"
+        );
+        assert_eq!(out.after, "L1\nL2x\nL3y\n");
+        assert_eq!(out.ops, 2);
+    }
+
+    #[test]
+    fn file_content_before_no_disponible_si_el_patch_no_cuadra() {
+        let dir = tmpdir("drift");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("Comp.tsx");
+        // El disco NO coincide con el "after" del patch (drift: edición externa/Bash
+        // entre la última herramienta y ahora). Honestidad: NO inventar un before.
+        fs::write(&file, "totally\ndifferent\ncontent\n").unwrap();
+        let fp = file.to_str().unwrap();
+        let edit = edit_hunk(
+            "s1",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-06-02T00:00:00Z",
+            None,
+            1,
+            1,
+            &[" a", "-B", "+X", " c"],
         );
         write_top_level(&dir, "proj", "s1", &[edit]);
 
         let out = file_content(dir.to_str().unwrap(), fp, Some("s1"));
         assert!(
             !out.before_available,
-            "sin fuente, el before es NO disponible"
+            "ante drift, el before queda NO disponible (no se inventa)"
         );
-        assert_eq!(out.before, "");
-        assert!(out.after_available);
-        assert_eq!(out.ops, 1);
     }
 
     #[test]
