@@ -163,10 +163,32 @@ files come from `toolUseResult.filePath`; the diff from
 `cwd`; only top-level transcripts count, nested subagent `.jsonl` files are
 ignored). See `CLAUDE.md` and `SPEC.md` for the full picture.
 
+## Branching model
+
+arrow follows a simple **trunk-based / GitHub Flow** model — there are no long-lived
+`develop`, `feature`, or `hotfix` branches kept around. `main` is always the source of
+truth and is protected: changes land via pull requests with green CI.
+
+For each change, branch off `main`, open a PR, and **delete the branch once it's merged**.
+Name the branch with a type prefix so its intent is obvious:
+
+| Prefix | For | Example |
+|---|---|---|
+| `feat/` | a new feature | `feat/sidebar-search` |
+| `fix/` | a bug fix | `fix/diff-scroll` |
+| `hotfix/` | an urgent fix on top of a release | `hotfix/crash-on-empty-session` |
+| `docs/` | documentation only | `docs/readme-screenshots` |
+| `refactor/` | internal cleanup, no behavior change | `refactor/extract-parser` |
+| `chore/` or `ci/` | tooling, dependencies, CI | `ci/cache-cargo` |
+
+Keep branches small and short-lived; if `main` moves under you, rebase onto it before
+merging. (Maintainers may push small, low-risk changes straight to `main` thanks to the
+admin bypass, but branch + PR is the default for everything non-trivial.)
+
 ## Pull request workflow
 
-1. **Fork the repo**, or branch from `main` if you have push access. Don't commit
-   directly to `main`.
+1. **Fork the repo**, or create a short-lived branch off `main` if you have push access
+   (see the branch-naming convention above). Don't commit directly to `main`.
 2. Make **small, focused commits** with messages in the **imperative mood**
    (e.g. "Add sidebar filter", not "Added" / "Adds").
 3. Before opening the PR, make sure the checks below pass locally — they're the
