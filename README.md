@@ -12,7 +12,13 @@ sin chat con IA, y **sin depender de git ni de hooks**.
 
 ## Por qué existe
 
-El espacio de tooling para Claude Code está saturado, pero nadie cubre exactamente esto:
+Cuando Claude Code pasa a ser **el que ejecuta** la mayoría de los cambios, tu trabajo se vuelve
+**dirigir y revisar**: el IDE deja de ser donde escribís y queda relegado a *"mostrame qué tocó"*.
+Pero mantener un IDE —o un cliente Git pesado tipo Electron— abierto solo para revisar diffs
+desperdicia de cientos de MB a varios GB de RAM. arrow hace exactamente esa parte —ver qué cambió
+Claude, repo por repo y sesión por sesión— en una app liviana y enfocada.
+
+Y el espacio de tooling para Claude Code está saturado, pero nadie cubre exactamente esto:
 una **UI gráfica, sin chat**, con la jerarquía `repositorio → archivos tocados → diff/editor`
 como audit trail navegable. Lo más cercano es un TUI de terminal (`claude-file-recovery`),
 un cliente de chat web (`claude-code-viewer`), o GUIs grandes orientadas a *ejecutar* agentes
