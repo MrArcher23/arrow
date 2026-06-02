@@ -88,16 +88,19 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
 - **Tiempo relativo congelado**: `relative()`/`isLive()` solo se recalculan al re-render; si el
   report no cambia, el "Nm ago" no avanza. Un tick de reloj independiente lo resolvería (también
   anotado en SPEC.md).
-- **Reconstrucción del `before` cuando `originalFile` es `null`** — ✅ mitigado (fix
+- **Reconstrucción del `before` cuando `originalFile` es `null`** — ✅ resuelto (fix
   `before-null-originalfile`). Claude Code emite `originalFile:null` en parte de los Edit aunque
   haya `structuredPatch`; antes eso hacía que un archivo existente se pintara como "new file" (una
-  sola columna, sin el diff). Ahora el parser respalda el `before` con el último `Read` **completo**
-  del archivo en la sesión; si no hay (p.ej. el archivo solo se leyó en **fragmentos parciales/offset**,
-  como pasó con `StatsUI.tsx`), el `before` queda **no disponible** y el frontend muestra el archivo
-  actual con un banner honesto en vez de fingir "new file". **Pendiente (Fase 3):** para esos casos
-  residuales, reconstruir el `before` desde `~/.claude/file-history/<sessionId>/` (snapshot canónico) o
-  reaplicando los `structuredPatch` en reversa sobre el `after` — ambos darían el diff completo donde
-  hoy decimos "no disponible".
+  sola columna, sin el diff). Ahora `resolve_before` (`src/lib.rs`) lo resuelve en cascada: (1)
+  `originalFile` inline del 1er Edit; (2) el `originalFile` exacto más temprano de una edición posterior
+  reaplicando en reversa las previas; (3) el último `Read` **completo** (los parciales/offset se
+  descartan); (4) reaplicar en reversa TODAS las ediciones de la sesión sobre el `after` de disco. Cada
+  reconstrucción se **verifica** contra el contenido (un hunk que no cuadra ⇒ drift ⇒ se aborta y queda
+  "no disponible", honesto). Verificado con datos reales: `EstadisticasV2.tsx` (vía Read completo) y
+  `StatsUI.tsx` (4 Edits todos con `originalFile:null` + solo Reads parciales ⇒ reverse-apply desde
+  disco, before=1488 líneas) muestran su diff. **Posible mejora (Fase 3):** usar
+  `~/.claude/file-history/<sessionId>/<sha256(path)[:16]>@v<n>` (snapshot canónico) para los casos con
+  drift donde el reverse-apply aborta.
 - **Sin CI**: los tests y `/rust-review` se corren a mano. Si el proyecto crece, valdría un workflow
   de GitHub Actions (`cargo test` + `cargo clippy` + `cargo fmt --check`). También habilitaría el
   **build de macOS** en un runner `macos` (`tauri-action`) sin necesitar una Mac física.
