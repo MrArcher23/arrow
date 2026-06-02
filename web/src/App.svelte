@@ -16,6 +16,8 @@
   let error = $state<string | null>(null)
   let content = $state<FileContent | null>(null)
   let loadingContent = $state(false)
+  // Bound to the DiffView instance so the global Ctrl+F can open its find panel.
+  let diffView = $state<{ openSearch: () => void }>()
   let selected = $state<{ session: string; path: string } | null>(null)
   let theme = $state(localStorage.getItem('arrow.theme') ?? DEFAULT_THEME)
 
@@ -45,6 +47,13 @@
     } else if (e.key === '0') {
       e.preventDefault()
       setZoom(1)
+    } else if (e.key === 'f' || e.key === 'F') {
+      // Ctrl/Cmd+F: open the in-diff find panel. Routed through DiffView so it works even
+      // when no editor column is focused yet. No-op (and lets the default through) if there
+      // is no diff shown.
+      if (!content) return
+      e.preventDefault()
+      diffView?.openSearch()
     }
   }
 
@@ -228,7 +237,7 @@
         </div>
       {/if}
       <div class="diff-area">
-        <DiffView {content} loading={loadingContent} themeId={theme} />
+        <DiffView bind:this={diffView} {content} loading={loadingContent} themeId={theme} />
       </div>
     </main>
   </div>
