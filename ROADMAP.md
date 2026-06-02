@@ -88,6 +88,16 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
 - **Tiempo relativo congelado**: `relative()`/`isLive()` solo se recalculan al re-render; si el
   report no cambia, el "Nm ago" no avanza. Un tick de reloj independiente lo resolvería (también
   anotado en SPEC.md).
+- **Reconstrucción del `before` cuando `originalFile` es `null`** — ✅ mitigado (fix
+  `before-null-originalfile`). Claude Code emite `originalFile:null` en parte de los Edit aunque
+  haya `structuredPatch`; antes eso hacía que un archivo existente se pintara como "new file" (una
+  sola columna, sin el diff). Ahora el parser respalda el `before` con el último `Read` **completo**
+  del archivo en la sesión; si no hay (p.ej. el archivo solo se leyó en **fragmentos parciales/offset**,
+  como pasó con `StatsUI.tsx`), el `before` queda **no disponible** y el frontend muestra el archivo
+  actual con un banner honesto en vez de fingir "new file". **Pendiente (Fase 3):** para esos casos
+  residuales, reconstruir el `before` desde `~/.claude/file-history/<sessionId>/` (snapshot canónico) o
+  reaplicando los `structuredPatch` en reversa sobre el `after` — ambos darían el diff completo donde
+  hoy decimos "no disponible".
 - **Sin CI**: los tests y `/rust-review` se corren a mano. Si el proyecto crece, valdría un workflow
   de GitHub Actions (`cargo test` + `cargo clippy` + `cargo fmt --check`). También habilitaría el
   **build de macOS** en un runner `macos` (`tauri-action`) sin necesitar una Mac física.
