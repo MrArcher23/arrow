@@ -52,7 +52,7 @@ empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web 
   app de marca inglesa. Ej: `live`, `History`, `Other repos`, `new file`, `5m ago`. Los strings de
   UI viven en los componentes Svelte y en `web/src/lib/time.ts` (tiempo relativo y buckets de fecha).
 - **Verifica cada cambio del parser contra datos reales** (`/verify-parser`) antes de decir que funciona; reporta la salida, no una afirmación.
-- Commits: mensaje en imperativo; co-autor `Claude Opus 4.8 (1M context)`. Rama `main`. Push solo cuando se pida.
+- Commits: mensaje en imperativo. Rama `main`. Push solo cuando se pida.
 
 ## Skills del proyecto
 - `/run-arrow` — compila el parser y levanta la UI.
