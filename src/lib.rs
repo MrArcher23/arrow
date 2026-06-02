@@ -156,11 +156,13 @@ pub fn build_report(projects_dir: &str) -> ReportOut {
 }
 
 /// One target edit captured during a session scan: the inline `originalFile`
-/// snapshot (if Claude Code emitted it) and the patch hunks. Together these let
-/// us reconstruct the "before" even when the first edit lacks an inline original.
+/// snapshot (if Claude Code emitted it), the patch hunks, and whether the edit
+/// CREATED the file (`toolUseResult.type == "create"`). Together these let us
+/// reconstruct the "before" even when the first edit lacks an inline original.
 struct EditRec {
     original: Option<String>,
     hunks: Vec<Hunk>,
+    is_create: bool,
 }
 
 /// Mutable accumulator used while scanning a session for one file's history.
@@ -179,6 +181,9 @@ struct BeforeScan {
     /// first edit.
     pending_read: Option<String>,
     first_edit_seen: bool,
+    /// Latest edit timestamp in this transcript — used to pick the most recent
+    /// session when `file_content` runs without a session filter.
+    last_ts: Option<String>,
     ops: usize,
     user_modified: bool,
 }
@@ -205,8 +210,11 @@ pub fn file_content(projects_dir: &str, file: &str, session: Option<&str>) -> Co
     let target = file.to_string();
     let projects_path = Path::new(projects_dir);
 
+    // Scan each top-level transcript INDEPENDENTLY and keep the one whose edits
+    // are most recent. One transcript = one session, so a file edited by several
+    // sessions is never blended into a fabricated cross-session history (matters
+    // for the CLI's no-`--session` path; the UI always passes a session).
     let mut scan = BeforeScan::default();
-
     for entry in WalkDir::new(projects_dir)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -231,7 +239,14 @@ pub fn file_content(projects_dir: &str, file: &str, session: Option<&str>) -> Co
                 continue;
             }
         }
-        scan_transcript(path, &target, session, &mut scan);
+        let mut one = BeforeScan::default();
+        scan_transcript(path, &target, session, &mut one);
+        if !one.first_edit_seen {
+            continue; // this transcript never edited the file
+        }
+        if one.last_ts > scan.last_ts {
+            scan = one; // most recent session wins
+        }
     }
 
     let (after, after_available) = match std::fs::read_to_string(&target) {
@@ -264,9 +279,6 @@ fn scan_transcript(path: &Path, target: &str, session: Option<&str>, scan: &mut 
         Ok(f) => f,
         Err(_) => return,
     };
-    // Reads only back an edit within the SAME transcript (= same session), so a
-    // pending snapshot must not leak across files when `session` is None.
-    scan.pending_read = None;
     for line in BufReader::new(f).lines().map_while(std::result::Result::ok) {
         if line.trim().is_empty() {
             continue;
@@ -302,6 +314,11 @@ fn scan_transcript(path: &Path, target: &str, session: Option<&str>, scan: &mut 
             scan.first_edit_seen = true;
         }
         scan.ops += 1;
+        if let Some(ts) = v.get("timestamp").and_then(Value::as_str) {
+            if scan.last_ts.as_deref().map(|l| ts > l).unwrap_or(true) {
+                scan.last_ts = Some(ts.to_string());
+            }
+        }
         if tur
             .get("userModified")
             .and_then(Value::as_bool)
@@ -316,6 +333,7 @@ fn scan_transcript(path: &Path, target: &str, session: Option<&str>, scan: &mut 
         scan.edits.push(EditRec {
             original,
             hunks: parse_hunks(tur),
+            is_create: tur.get("type").and_then(Value::as_str) == Some("create"),
         });
     }
 }
@@ -375,12 +393,27 @@ fn parse_hunks(tur: &Value) -> Vec<Hunk> {
 
 /// Resolves the file's "before" (state prior to the session's FIRST edit) from
 /// the captured `edits`, an optional full `Read` snapshot, and the on-disk
-/// `after`. Most authoritative source first; every reconstruction is
-/// context-verified by [`reverse_apply`] and yields `None` on mismatch, so we
-/// never show an invented "before". `None` overall means honestly "unavailable".
+/// `after`. Most authoritative source first:
+///   0. a CREATE (`type:"create"`) → the file didn't exist, so "before" is empty;
+///   1. the first edit's inline `originalFile` (an exact pre-edit snapshot);
+///   2. the earliest LATER inline snapshot, reverse-applying the edits before it;
+///   3. a full `Read` snapshot, but only if it lines up with the first edit;
+///   4. reverse-apply ALL edits onto the on-disk `after`.
+///
+/// Sources 2 and 4 are reconstructions verified PER HUNK by [`reverse_apply`]
+/// (a mismatch yields `None`), and source 3 is checked against the first edit by
+/// [`snapshot_consistent`]. Verification is LOCAL to the touched regions, so a
+/// case-4 reconstruction off a stale disk is best-effort: out-of-band changes in
+/// regions no hunk touched are carried through (they appear identically in before
+/// and after, so they're never attributed as a diff). `None` overall means
+/// honestly "unavailable".
 fn resolve_before(edits: &[EditRec], read_before: Option<&str>, after: &str) -> Option<String> {
-    // 1. The first edit already carries the exact pre-edit content.
     if let Some(first) = edits.first() {
+        // 0. A brand-new file (Write create): nothing existed before it.
+        if first.is_create {
+            return Some(String::new());
+        }
+        // 1. The first edit already carries the exact pre-edit content.
         if let Some(orig) = &first.original {
             return Some(orig.clone());
         }
@@ -395,9 +428,17 @@ fn resolve_before(edits: &[EditRec], read_before: Option<&str>, after: &str) -> 
             break; // anchor found but reconstruction failed; fall through
         }
     }
-    // 3. A full Read snapshot captured before the first edit (≈ pre-edit state).
+    // 3. A full Read snapshot captured before the first edit — trusted only if it
+    //    lines up with the first edit's "before" side. An untracked change between
+    //    the Read and the edit would otherwise be misattributed to this session.
     if let Some(r) = read_before {
-        return Some(r.to_string());
+        if edits
+            .first()
+            .map(|e| snapshot_consistent(r, e))
+            .unwrap_or(true)
+        {
+            return Some(r.to_string());
+        }
     }
     // 4. Last resort: undo EVERY edit from the current disk content. Only when at
     //    least one edit has hunks (otherwise we'd just echo `after`).
@@ -409,24 +450,60 @@ fn resolve_before(edits: &[EditRec], read_before: Option<&str>, after: &str) -> 
     None
 }
 
+/// Checks that `snapshot` (a candidate pre-edit state) is consistent with `edit`
+/// being the next change: every hunk's "before" view (context + removed) must
+/// appear at the hunk's OLD coordinates. Lets [`resolve_before`] reject a `Read`
+/// snapshot that drifted from what the edit actually saw.
+fn snapshot_consistent(snapshot: &str, edit: &EditRec) -> bool {
+    let lines: Vec<&str> = snapshot.split('\n').collect();
+    for h in &edit.hunks {
+        if h.old_start < 1 {
+            return false;
+        }
+        let start = (h.old_start - 1) as usize;
+        let before_view: Vec<&str> = h
+            .lines
+            .iter()
+            .filter_map(|l| match l.as_bytes().first() {
+                Some(b'+') | Some(b'\\') => None,
+                Some(b'-') => Some(&l[1..]),
+                _ => Some(l.strip_prefix(' ').unwrap_or(l)),
+            })
+            .collect();
+        let end = start + before_view.len();
+        if end > lines.len() || lines[start..end] != before_view[..] {
+            return false;
+        }
+    }
+    true
+}
+
 /// Reverse-applies `edits` (chronological — each transforms F_i → F_{i+1}) onto
 /// `anchor` (the content AFTER the last edit in the slice, i.e. F_n), returning
 /// the content BEFORE the first edit (F_0).
 ///
-/// Each hunk is verified against the current reconstruction; any mismatch (drift,
-/// stale disk, a non-tool edit in between) returns `None` so the caller can fall
-/// back rather than show a wrong "before". Patch line prefixes: ' ' context, '+'
-/// added (after only), '-' removed (before only); a leading '\' is the
-/// "No newline at end of file" marker and is ignored.
+/// Each hunk's "after" view is verified against the current reconstruction at its
+/// `newStart`; any mismatch (drift, stale disk, a non-tool edit in a touched
+/// region, or overlapping hunks) returns `None` so the caller can fall back
+/// rather than show a wrong "before". Verification is LOCAL: changes in regions
+/// NO hunk touches aren't checked — when `anchor` is a stale disk they pass
+/// through unchanged (and thus never surface as a diff). Patch line prefixes:
+/// ' ' context, '+' added (after only), '-' removed (before only). The
+/// "\ No newline at end of file" marker is NOT modeled — it never appears inside
+/// `structuredPatch.lines` in real top-level transcripts; if it ever did, the
+/// reconstructed trailing newline could be off by one line in the last hunk.
 fn reverse_apply(anchor: &str, edits: &[EditRec]) -> Option<String> {
     // `split('\n')` keeps a trailing "" when the content ends in a newline, and
     // `join("\n")` restores it exactly.
     let mut lines: Vec<String> = anchor.split('\n').map(str::to_string).collect();
     for edit in edits.iter().rev() {
         // Highest newStart first, so earlier splices don't shift later indices
-        // within the same edit.
+        // within the same edit. `min_processed` is the lowest index already
+        // spliced this edit: a hunk reaching into it means overlapping after-view
+        // ranges — internally inconsistent, so bail instead of inventing.
         let mut hunks: Vec<&Hunk> = edit.hunks.iter().collect();
         hunks.sort_by_key(|h| std::cmp::Reverse(h.new_start));
+        let mut min_processed = usize::MAX;
         for h in hunks {
             if h.new_start < 1 {
                 return None;
@@ -450,10 +527,11 @@ fn reverse_apply(anchor: &str, edits: &[EditRec]) -> Option<String> {
                 }
             }
             let end = start + after_view.len();
-            if end > lines.len() || lines[start..end] != after_view[..] {
-                return None; // the hunk doesn't line up: bail honestly
+            if end > lines.len() || end > min_processed || lines[start..end] != after_view[..] {
+                return None; // doesn't line up, or overlaps a sibling hunk: bail
             }
             lines.splice(start..end, before_view);
+            min_processed = start;
         }
     }
     Some(lines.join("\n"))
@@ -1135,7 +1213,7 @@ mod tests {
         fs::write(&file, "line A\nEDITED\nline C\n").unwrap();
         let fp = file.to_str().unwrap();
 
-        // Read (full) then Edit with originalFile:null, in chronological order.
+        // Read (full, CONSISTENT with the edit) then Edit with originalFile:null.
         let read = read_record(
             "s1",
             repo.to_str().unwrap(),
@@ -1145,12 +1223,15 @@ mod tests {
             3,
             3,
         );
-        let edit = edit_record_null_original(
+        let edit = edit_hunk(
             "s1",
             repo.to_str().unwrap(),
             fp,
             "2026-06-02T00:01:00Z",
-            &["-line B", "+EDITED"],
+            None,
+            1,
+            1,
+            &[" line A", "-line B", "+EDITED", " line C"],
         );
         write_top_level(&dir, "proj", "s1", &[read, edit]);
 
@@ -1336,5 +1417,153 @@ mod tests {
             !out.before_available,
             "un Read truncado no debe usarse como before"
         );
+    }
+
+    #[test]
+    fn file_content_archivo_creado_se_marca_como_nuevo() {
+        let dir = tmpdir("create");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("New.tsx");
+        fs::write(&file, "brand new content\n").unwrap();
+        let fp = file.to_str().unwrap();
+        // Write that CREATES the file: type:"create", originalFile null, no patch.
+        let create = json!({
+            "type": "user", "sessionId": "s1", "cwd": repo.to_str().unwrap(),
+            "gitBranch": "main", "timestamp": "2026-06-02T00:00:00Z",
+            "toolUseResult": {
+                "filePath": fp, "type": "create", "userModified": false,
+                "originalFile": null, "structuredPatch": [],
+            }
+        })
+        .to_string();
+        write_top_level(&dir, "proj", "s1", &[create]);
+
+        let out = file_content(dir.to_str().unwrap(), fp, Some("s1"));
+        // A created file has an empty "before" available (the frontend then shows
+        // "+ new file"), NOT an "unavailable" / honest-banner state.
+        assert!(
+            out.before_available,
+            "un archivo creado tiene before disponible"
+        );
+        assert_eq!(out.before, "", "el before de un create es vacío");
+        assert_eq!(out.after, "brand new content\n");
+        assert_eq!(out.ops, 1);
+    }
+
+    #[test]
+    fn reverse_apply_aborta_con_hunks_solapados() {
+        let dir = tmpdir("overlap");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("Comp.tsx");
+        fs::write(&file, "a\nX\nY\nb\n").unwrap();
+        let fp = file.to_str().unwrap();
+        // Two hunks whose after-view ranges overlap (indices [1,3) and [2,4)).
+        // Internally inconsistent: reverse_apply must bail, before unavailable.
+        let edit = json!({
+            "type": "user", "sessionId": "s1", "cwd": repo.to_str().unwrap(),
+            "gitBranch": "main", "timestamp": "2026-06-02T00:00:00Z",
+            "toolUseResult": {
+                "filePath": fp, "userModified": false, "originalFile": null,
+                "structuredPatch": [
+                    { "oldStart": 2, "oldLines": 2, "newStart": 2, "newLines": 2,
+                      "lines": [" X", "-P", "+Y"] },
+                    { "oldStart": 3, "oldLines": 2, "newStart": 3, "newLines": 2,
+                      "lines": [" Y", "-Q", "+b"] },
+                ],
+            }
+        })
+        .to_string();
+        write_top_level(&dir, "proj", "s1", &[edit]);
+
+        let out = file_content(dir.to_str().unwrap(), fp, Some("s1"));
+        assert!(
+            !out.before_available,
+            "hunks solapados no deben producir un before inventado"
+        );
+    }
+
+    #[test]
+    fn file_content_descarta_read_que_no_cuadra_con_el_edit() {
+        // Drift entre el Read y el Edit: un cambio NO rastreado (Bash/otra sesión)
+        // alteró "line A" -> "line X" en disco. El Read viejo ("line A...") NO debe
+        // usarse; se cae al reverse-apply desde disco, que no atribuye ese cambio.
+        let dir = tmpdir("staleread");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("Comp.tsx");
+        fs::write(&file, "line X\nEDITED\nline C\n").unwrap();
+        let fp = file.to_str().unwrap();
+        // Read capturó el estado viejo (line A); el Edit (originalFile null) vio el
+        // disco real (line X) según su contexto.
+        let read = read_record(
+            "s1",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-06-02T00:00:00Z",
+            "line A\nline B\nline C\n",
+            3,
+            3,
+        );
+        let edit = edit_hunk(
+            "s1",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-06-02T00:01:00Z",
+            None,
+            1,
+            1,
+            &[" line X", "-line B", "+EDITED", " line C"],
+        );
+        write_top_level(&dir, "proj", "s1", &[read, edit]);
+
+        let out = file_content(dir.to_str().unwrap(), fp, Some("s1"));
+        assert!(out.before_available);
+        assert_eq!(
+            out.before, "line X\nline B\nline C\n",
+            "el before honesto sale del reverse-apply, NO del Read drifteado"
+        );
+    }
+
+    #[test]
+    fn file_content_sin_sesion_elige_la_mas_reciente() {
+        // El mismo archivo editado por dos sesiones. Sin filtro de sesión, NO se
+        // mezclan: gana la sesión con la edición más reciente.
+        let dir = tmpdir("nosession");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("Shared.tsx");
+        fs::write(&file, "DISK\n").unwrap();
+        let fp = file.to_str().unwrap();
+        let old = edit_hunk(
+            "sessOld",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-01-01T00:00:00Z",
+            Some("OLD_A\n"),
+            1,
+            1,
+            &["-OLD_A", "+DISK"],
+        );
+        let new = edit_hunk(
+            "sessNew",
+            repo.to_str().unwrap(),
+            fp,
+            "2026-06-01T00:00:00Z",
+            Some("OLD_B\n"),
+            1,
+            1,
+            &["-OLD_B", "+DISK"],
+        );
+        write_top_level(&dir, "projOld", "sessOld", &[old]);
+        write_top_level(&dir, "projNew", "sessNew", &[new]);
+
+        let out = file_content(dir.to_str().unwrap(), fp, None);
+        assert_eq!(
+            out.before, "OLD_B\n",
+            "sin sesión, gana la edición más reciente (sessNew), sin mezclar"
+        );
+        assert_eq!(out.ops, 1, "solo cuenta las ops de la sesión elegida");
     }
 }

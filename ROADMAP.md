@@ -95,12 +95,20 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
   `originalFile` inline del 1er Edit; (2) el `originalFile` exacto más temprano de una edición posterior
   reaplicando en reversa las previas; (3) el último `Read` **completo** (los parciales/offset se
   descartan); (4) reaplicar en reversa TODAS las ediciones de la sesión sobre el `after` de disco. Cada
-  reconstrucción se **verifica** contra el contenido (un hunk que no cuadra ⇒ drift ⇒ se aborta y queda
-  "no disponible", honesto). Verificado con datos reales: `EstadisticasV2.tsx` (vía Read completo) y
+  reconstrucción se **verifica por hunk** (un hunk que no cuadra ⇒ drift ⇒ se aborta y queda "no
+  disponible", honesto). Verificado con datos reales: `EstadisticasV2.tsx` (vía Read completo) y
   `StatsUI.tsx` (4 Edits todos con `originalFile:null` + solo Reads parciales ⇒ reverse-apply desde
-  disco, before=1488 líneas) muestran su diff. **Posible mejora (Fase 3):** usar
-  `~/.claude/file-history/<sessionId>/<sha256(path)[:16]>@v<n>` (snapshot canónico) para los casos con
-  drift donde el reverse-apply aborta.
+  disco, before=1488 líneas) muestran su diff. **Endurecido tras auditoría adversarial** (20 agentes):
+  (a) `create` (Write de archivo nuevo, `originalFile:null`, 0 hunks) ⇒ before vacío = "new file" en vez
+  de "no disponible"; (b) el `Read` snapshot solo se usa si cuadra con el 1er Edit (`snapshot_consistent`),
+  evitando misatribuir un cambio no rastreado entre Read y Edit; (c) `--content` sin `--session` elige la
+  sesión más reciente, sin mezclar ediciones de varias sesiones; (d) hunks solapados ⇒ se aborta.
+  **Límites conocidos (documentados en el código, best-effort, no mienten):** la verificación es local a
+  las regiones tocadas, así que el reverse-apply desde un disco desfasado puede arrastrar cambios
+  fuera-de-hunk (aparecen igual en before y after ⇒ no se atribuyen como diff); el marcador
+  `\ No newline at end of file` no se modela (no aparece en `structuredPatch` real). **Posible mejora
+  (Fase 3):** usar `~/.claude/file-history/<sessionId>/<sha256(path)[:16]>@v<n>` (snapshot canónico) para
+  los casos con drift donde el reverse-apply aborta.
 - **Sin CI**: los tests y `/rust-review` se corren a mano. Si el proyecto crece, valdría un workflow
   de GitHub Actions (`cargo test` + `cargo clippy` + `cargo fmt --check`). También habilitaría el
   **build de macOS** en un runner `macos` (`tauri-action`) sin necesitar una Mac física.
