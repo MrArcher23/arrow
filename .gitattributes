@@ -1,0 +1,5 @@
+# Estadísticas de lenguajes de GitHub (Linguist).
+# gen_icons.py es un script de utilidad que solo generó los iconos (ya versionados
+# en src-tauri/icons/); no forma parte del stack en runtime (Rust + Svelte). Se
+# excluye del cálculo para que la barra de lenguajes refleje el proyecto real.
+src-tauri/gen_icons.py linguist-detectable=false
