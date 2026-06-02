@@ -31,13 +31,15 @@ empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web 
 - Archivos tocados = records con `toolUseResult.filePath` (solo `Edit`/`Write`/`MultiEdit`; `Bash` NO).
 - Diff = `toolUseResult.structuredPatch` (hunks). `--content` reconstruye before / after (disco).
   El **before** = estado previo a la 1ª edición de la sesión, resuelto en cascada (`resolve_before`):
-  (1) `originalFile` inline del 1er Edit; (2) si Claude lo emite como `null` —pasa en parte de los Edit
-  aunque haya `structuredPatch`—, el `originalFile` exacto más temprano de una edición posterior
-  reaplicando en reversa las ediciones previas; (3) el último `Read` **completo** (los parciales/offset
-  se descartan); (4) reaplicar en reversa TODAS las ediciones de la sesión sobre el `after` de disco.
-  Cada reconstrucción se **verifica** contra el contenido (si un hunk no cuadra → drift → se aborta).
-  Sin fuente válida ⇒ `beforeAvailable:false` (el frontend muestra el archivo actual con banner honesto,
-  NUNCA "new file").
+  (0) si el 1er Edit es un `create` (Write de archivo nuevo) ⇒ before vacío ("new file"); (1) `originalFile`
+  inline del 1er Edit; (2) si Claude lo emite como `null` —pasa en parte de los Edit aunque haya
+  `structuredPatch`—, el `originalFile` exacto más temprano de una edición posterior reaplicando en
+  reversa las previas; (3) el último `Read` **completo** (los parciales/offset se descartan), solo si
+  cuadra con el 1er Edit; (4) reaplicar en reversa TODAS las ediciones sobre el `after` de disco.
+  Cada reconstrucción se **verifica por hunk** (si no cuadra → drift → se aborta); la verificación es
+  local a las regiones tocadas, así que el caso (4) sobre un disco desfasado es best-effort. Sin fuente
+  válida ⇒ `beforeAvailable:false` (el frontend muestra el archivo actual con banner honesto, NUNCA "new
+  file"). `--content` sin `--session` elige la sesión más reciente que tocó el archivo (no mezcla sesiones).
 - Metadatos de sesión: `ai-title`→título, `last-prompt`, `timestamp`→actividad.
 - Repo = **raíz git del `cwd`** de la sesión (`git_root`): fusiona subdirs como `web/` con su repo.
 - Solo cuentan transcripts de **primer nivel**; los `.jsonl` anidados (subagentes) se ignoran.
