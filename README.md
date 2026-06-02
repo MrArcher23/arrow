@@ -5,16 +5,43 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
 [![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev/)
 [![CI](https://github.com/MrArcher23/arrow/actions/workflows/ci.yml/badge.svg)](https://github.com/MrArcher23/arrow/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/MrArcher23/arrow?sort=semver)](https://github.com/MrArcher23/arrow/releases/latest)
+[![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black)](#install-linux)
 
 **An audit viewer for Claude Code.** It answers a single question, reliably:
 *which files did Claude touch, in which repo, with what diff, and in which session?* — without
 opening an IDE, without AI chat, and **without depending on git or hooks**.
 
-> Status: **Phase 2 complete + polish** — a desktop app (Tauri 2.x) with the Rust parser as its
-> native backend, **already usable day to day** on Linux (`.deb` + AppImage). Phases 0 (parser/CLI),
-> 1 (web UI) and 2 (packaging) are complete; after Phase 2 we added 9 parser tests, a resilient
-> watcher, zoom, a custom titlebar, active-session focus, and macOS adaptation. Phases 3 (honesty +
-> git) and 4 (editing) are pending — details in [ROADMAP.md](ROADMAP.md).
+> Status: **Phase 2 complete + polish — first release out
+> ([v0.1.1](https://github.com/MrArcher23/arrow/releases/latest), Linux)**. A desktop app (Tauri 2.x)
+> with the Rust parser as its native backend, **already usable day to day** on Linux (`.deb` +
+> AppImage). Phases 0 (parser/CLI), 1 (web UI) and 2 (packaging) are complete; since then: 18 parser
+> tests, a resilient watcher, zoom, a custom titlebar, active-session focus, macOS adaptation, and a
+> robust diff-"before" reconstruction (shows a real diff even on Claude Code's `originalFile: null`
+> edits, instead of mislabeling an edited file as new). Phases 3 (honesty + git) and 4 (editing) are
+> pending — details in [ROADMAP.md](ROADMAP.md).
+
+## Install (Linux)
+
+> **Linux x86-64 only for now.** Pre-built bundles are published for Linux; **macOS and Windows are
+> not built yet** (the code already adapts to macOS — see [MACOS.md](MACOS.md) — it's a build-runner
+> and signing matter, tracked in the [roadmap](ROADMAP.md)). On other platforms, build from source
+> (see *Desktop app* below).
+
+Grab the latest from the [**Releases**](https://github.com/MrArcher23/arrow/releases/latest) page:
+
+```bash
+# Debian / Ubuntu / Pop!_OS — the .deb
+sudo dpkg -i arrow_*_amd64.deb
+sudo apt-get install -f      # only if dpkg reports missing dependencies
+
+# Any distro — the AppImage (no install)
+chmod +x arrow_*_amd64.AppImage
+./arrow_*_amd64.AppImage
+```
+
+The bundles are built on Ubuntu 22.04, so they run on **glibc ≥ 2.35** (Ubuntu/Pop!_OS 22.04+,
+Debian 12+, Fedora 37+, and newer). On older systems, build from source.
 
 ## Why it exists
 
@@ -144,10 +171,11 @@ cargo tauri build
 The parser lives in a **library** (`src/lib.rs`): pure functions `build_report(projects_dir)` and
 `file_content(projects_dir, file, session)` + the serializable structs. Two frontends consume it:
 `src/main.rs` (the CLI, with flags intact) and `src-tauri/` (the desktop backend). Zero duplicated
-logic; the same source of truth for terminal, web, and native app. The parser ships **9 unit tests**
+logic; the same source of truth for terminal, web, and native app. The parser ships **18 unit tests**
 (`cargo test`) over fixture transcripts in a tempdir, covering the non-obvious parts: defensive
 parsing, top-level transcripts only, grouping by git root, `+/−` counting, filtering of
-`~/.claude/`, and recency ordering.
+`~/.claude/`, recency ordering, and the diff-"before" reconstruction cascade (inline `originalFile`,
+reverse-applied patches, full-`Read` snapshot, create → new file, and drift → honestly unavailable).
 
 ## Roadmap
 
