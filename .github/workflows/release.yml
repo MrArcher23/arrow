@@ -48,10 +48,12 @@ jobs:
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
+      # No cargo cache here ON PURPOSE. A shared cache poisons the release: a
+      # `cargo-tauri` binary built on a newer runner (24.04, glibc 2.39) gets
+      # restored onto this pinned 22.04 runner and then fails at
+      # `cargo tauri build` with `GLIBC_2.39 not found` (the cache key doesn't
+      # distinguish the Ubuntu version). Releases are infrequent (tag pushes), so
+      # a clean build is the correct, safe trade-off.
 
       - name: Set up Node
         uses: actions/setup-node@v4
