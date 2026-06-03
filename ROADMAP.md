@@ -5,8 +5,9 @@ Archivo de seguimiento entre sesiones. El **roadmap canónico de fases** vive en
 backlog de ideas que aún no están comprometidas a ninguna fase. Las **convenciones** del proyecto
 están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 
-> Última actualización: 2026-06-03 (Fase 2 + pulido + mejoras visuales: zoom, titlebar custom, foco por
-> sesión activa, orden de archivos por recencia de edición y tick de reloj para el tiempo relativo).
+> Última actualización: 2026-06-03 (distribución macOS: matrix de CI que publica el `.dmg` arm64+x64
+> en cada release + `install.sh` one-liner `curl … | bash`. Antes: Fase 2 + pulido + mejoras visuales:
+> zoom, titlebar custom, foco por sesión activa, orden de archivos por recencia y tick de reloj).
 
 ## Estado actual
 
@@ -126,10 +127,13 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
   `\ No newline at end of file` no se modela (no aparece en `structuredPatch` real). **Posible mejora
   (Fase 3):** usar `~/.claude/file-history/<sessionId>/<sha256(path)[:16]>@v<n>` (snapshot canónico) para
   los casos con drift donde el reverse-apply aborta.
-- **Sin CI**: los tests y `/rust-review` se corren a mano. Si el proyecto crece, valdría un workflow
-  de GitHub Actions (`cargo test` + `cargo clippy` + `cargo fmt --check`). También habilitaría el
-  **build de macOS** en un runner `macos` (`tauri-action`) sin necesitar una Mac física.
-- **macOS sin verificar**: el código ya está adaptado a Mac (titlebar nativa + font-weight por OS;
-  ver [MACOS.md](MACOS.md)), pero el bloque `cfg(target_os = "macos")` solo se activa al compilar en
-  una Mac → falta el primer `cargo tauri build --bundles app dmg` real para confirmar el look de la
-  titlebar y el `.dmg`. La firma/notarización (Gatekeeper) queda fuera del MVP.
+- **Build de macOS en CI** — ✅ resuelto. `release.yml` es ahora una **matrix** (Linux `ubuntu-22.04`
+  + `macos-14` arm64 + `macos-13` Intel): cada tag `v*` compila y publica los dos `.dmg` (ad-hoc
+  signed, sin secretos) junto al `.deb` + AppImage, en runners de macOS **gratis** (sin Mac física).
+  Encima va `install.sh` (raíz), el one-liner `curl … | bash` que baja el `.dmg` del último Release y
+  lo deja en `/Applications`. **Pendiente:** firma/notarización (Apple Developer, ~99 USD/año) para
+  quitar la fricción de Gatekeeper, y un **Homebrew Cask** (`brew install --cask`) con upgrade/uninstall.
+- **macOS sin verificar en hardware**: el código ya está adaptado a Mac (titlebar nativa + font-weight
+  por OS; ver [MACOS.md](MACOS.md)) y el `.dmg` ya se construye en CI, pero el bloque
+  `cfg(target_os = "macos")` y el `install.sh` aún **no se probaron en una Mac real** → falta correr
+  un tag y confirmar el look de la titlebar, que el `.dmg` monta y que el one-liner instala bien.
