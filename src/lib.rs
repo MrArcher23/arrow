@@ -43,6 +43,10 @@ pub struct FileChange {
     pub added: usize,
     pub removed: usize,
     pub hunks: Vec<Hunk>,
+    /// Most recent edit timestamp for this file within the session (max over all
+    /// its Edit/Write/MultiEdit records). Drives recency ordering in the UI: the
+    /// file edited last bubbles to the top, and re-touching one lifts it back up.
+    pub last_ts: Option<String>,
 }
 
 pub struct Hunk {
@@ -125,6 +129,9 @@ pub struct FileOut {
     pub ops: usize,
     pub added: usize,
     pub removed: usize,
+    /// ISO 8601 of the file's most recent edit in the session; `None` if no
+    /// record carried a timestamp. Files are emitted most-recent-first.
+    pub last_touched: Option<String>,
 }
 
 /// Salida del modo `--content`: el "antes" (estado previo a la primera edición de
@@ -696,6 +703,13 @@ fn ingest(
     let fc = sess.files.entry(file_path).or_default();
 
     fc.ops += 1;
+    // Track the latest edit time for this file (record-level `timestamp`, same
+    // field the session meta uses). Kept as max so a re-touch updates recency.
+    if let Some(ts) = v.get("timestamp").and_then(Value::as_str) {
+        if fc.last_ts.as_deref().map(|l| ts > l).unwrap_or(true) {
+            fc.last_ts = Some(ts.to_string());
+        }
+    }
     if let Some(t) = tur.get("type").and_then(Value::as_str) {
         fc.write_type = Some(t.to_string());
     }
@@ -733,25 +747,37 @@ pub fn build_report_from(
                 .iter()
                 .map(|(sid, sess)| {
                     let m = metas.get(sid);
+                    // Files: most-recently-edited first (last_touched desc), mirroring how
+                    // sessions/repos are already ordered by recency. The file you're editing
+                    // now sits at the top, and a re-touch lifts it back up on the next live
+                    // refresh. Undated files sink to the end; ties break by path for a stable
+                    // order. Recency is anchored to the data timestamp, not the wall clock.
+                    let mut files: Vec<FileOut> = sess
+                        .files
+                        .iter()
+                        .map(|(path, fc)| FileOut {
+                            path: path.clone(),
+                            write_type: fc.write_type.clone(),
+                            user_modified: fc.user_modified,
+                            ops: fc.ops,
+                            added: fc.added,
+                            removed: fc.removed,
+                            last_touched: fc.last_ts.clone(),
+                        })
+                        .collect();
+                    files.sort_by(|a, b| {
+                        b.last_touched
+                            .cmp(&a.last_touched)
+                            .then_with(|| a.path.cmp(&b.path))
+                    });
                     SessionOut {
                         session_id: sid.clone(),
                         title: m.and_then(|m| m.title.clone()),
                         last_prompt: m.and_then(|m| m.last_prompt.clone()),
                         first_activity: m.and_then(|m| m.first_ts.clone()),
                         last_activity: m.and_then(|m| m.last_ts.clone()),
-                        file_count: sess.files.len(),
-                        files: sess
-                            .files
-                            .iter()
-                            .map(|(path, fc)| FileOut {
-                                path: path.clone(),
-                                write_type: fc.write_type.clone(),
-                                user_modified: fc.user_modified,
-                                ops: fc.ops,
-                                added: fc.added,
-                                removed: fc.removed,
-                            })
-                            .collect(),
+                        file_count: files.len(),
+                        files,
                     }
                 })
                 .collect();
@@ -1056,6 +1082,69 @@ mod tests {
         assert!(
             report.repos[0].cwd.ends_with("nuevo"),
             "el repo con actividad más reciente debe ir primero"
+        );
+    }
+
+    #[test]
+    fn archivos_ordenados_por_ultima_edicion() {
+        // El archivo editado más recientemente va primero; re-tocar uno lo sube de
+        // nuevo al tope (acumulado en una sola entrada, no duplicado).
+        let dir = tmpdir("file_recency");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let a = repo.join("a.txt");
+        let b = repo.join("b.txt");
+        fs::write(&a, "x\n").unwrap();
+        fs::write(&b, "y\n").unwrap();
+        let cwd = repo.to_str().unwrap();
+        // Toco a (T0), luego b (T1), luego vuelvo a tocar a (T2 = el más reciente).
+        let recs = vec![
+            edit_record(
+                "s1",
+                cwd,
+                a.to_str().unwrap(),
+                "2026-06-02T00:00:00Z",
+                "",
+                &["+x"],
+            ),
+            edit_record(
+                "s1",
+                cwd,
+                b.to_str().unwrap(),
+                "2026-06-02T00:01:00Z",
+                "",
+                &["+y"],
+            ),
+            edit_record(
+                "s1",
+                cwd,
+                a.to_str().unwrap(),
+                "2026-06-02T00:02:00Z",
+                "",
+                &["+x2"],
+            ),
+        ];
+        write_top_level(&dir, "proj", "s1", &recs);
+
+        let report = build_report(dir.to_str().unwrap());
+        let files = &report.repos[0].sessions[0].files;
+        assert_eq!(files.len(), 2, "a.txt deduplicado en una entrada + b.txt");
+        assert!(
+            files[0].path.ends_with("a.txt"),
+            "el archivo re-tocado más tarde (a.txt) debe burbujear al tope"
+        );
+        assert_eq!(
+            files[0].last_touched.as_deref(),
+            Some("2026-06-02T00:02:00Z")
+        );
+        assert_eq!(
+            files[0].ops, 2,
+            "las dos ediciones de a.txt se acumulan en una entrada"
+        );
+        assert!(files[1].path.ends_with("b.txt"));
+        assert_eq!(
+            files[1].last_touched.as_deref(),
+            Some("2026-06-02T00:01:00Z")
         );
     }
 

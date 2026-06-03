@@ -29,6 +29,7 @@ export interface FileChange {
   ops: number
   added: number
   removed: number
+  lastTouched: string | null // ISO 8601 — última edición de este archivo; los archivos vienen ordenados por esto (más reciente primero)
 }
 
 export interface FileContent {

@@ -21,9 +21,14 @@
   let selected = $state<{ session: string; path: string } | null>(null)
   let theme = $state(localStorage.getItem('arrow.theme') ?? DEFAULT_THEME)
 
+  // Reloj independiente: un tick periódico (ver onMount) reasigna `now` para que el
+  // tiempo relativo ("Nm ago") y el punto verde envejezcan/caduquen aunque el report no
+  // cambie. Display-only: NO refetcha ni reordena (el orden se ancla al timestamp del dato).
+  let now = $state(Date.now())
+
   // Repos con punto verde = los del foco (sesión activa + ráfaga) con actividad reciente.
   let liveCount = $derived(
-    report ? focusReposOf(report.repos).filter((r) => isLive(r.sessions[0]?.lastActivity)).length : 0
+    report ? focusReposOf(report.repos).filter((r) => isLive(r.sessions[0]?.lastActivity, now)).length : 0
   )
 
   // Zoom de la UI (estilo VSCode/terminal): Ctrl +/−/0. El estado vive aquí (reactivo);
@@ -176,9 +181,36 @@
     if (inTauri) {
       listen('report-changed', () => refresh(false)).then((u) => (unlisten = u))
     }
+
+    // Tick de reloj (30 s) independiente del report: hace avanzar el tiempo relativo y
+    // caducar el punto verde sin esperar a una edición nueva. Es puramente de display
+    // (reasigna `now`); no refetcha ni reordena. Se pausa con la ventana oculta para no
+    // trabajar en segundo plano, y se pone al día al volver al foco.
+    let clockId: ReturnType<typeof setInterval> | undefined
+    const startClock = () => {
+      if (clockId == null) clockId = setInterval(() => (now = Date.now()), 30000)
+    }
+    const stopClock = () => {
+      if (clockId != null) {
+        clearInterval(clockId)
+        clockId = undefined
+      }
+    }
+    const onVisibility = () => {
+      if (document.hidden) stopClock()
+      else {
+        now = Date.now() // catch-up inmediato al volver
+        startClock()
+      }
+    }
+    startClock()
+    document.addEventListener('visibilitychange', onVisibility)
+
     return () => {
       clearInterval(id)
       unlisten?.()
+      stopClock()
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   })
 
@@ -233,7 +265,7 @@
         <div class="error">{error}</div>
       {/if}
       {#if report}
-        <Sidebar {report} {selected} onSelect={select} />
+        <Sidebar {report} {selected} {now} onSelect={select} />
       {:else if !error}
         <div class="loading">Loading sessions…</div>
       {/if}
