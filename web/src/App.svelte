@@ -4,6 +4,7 @@
   import DiffView from './components/DiffView.svelte'
   import ThemeMenu from './components/ThemeMenu.svelte'
   import WindowControls from './components/WindowControls.svelte'
+  import OpenInEditor from './components/OpenInEditor.svelte'
   import { listen } from '@tauri-apps/api/event'
   import { loadReport, loadContent, clearContentCache, inTauri } from './lib/api'
   import { loadZoom, applyZoom, clampZoom, ZOOM_STEP } from './lib/zoom'
@@ -289,6 +290,7 @@
           {#if content?.userModified}
             <span class="warn">⚠ modified outside Claude</span>
           {/if}
+          <OpenInEditor path={selected.path} line={content?.firstChangedLine ?? null} />
         </div>
       {/if}
       <div class="diff-area">

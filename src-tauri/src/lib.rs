@@ -15,9 +15,11 @@ use std::time::Duration;
 
 use arrow::{ContentOut, ReportOut};
 use notify::{RecursiveMode, Watcher};
-use tauri::{AppHandle, Emitter};
 #[cfg(target_os = "macos")]
 use tauri::Manager;
+use tauri::{AppHandle, Emitter};
+
+mod editor;
 
 /// `~/.claude/projects` (fuente de verdad nativa de Claude Code).
 fn projects_dir() -> String {
@@ -35,6 +37,22 @@ fn report() -> ReportOut {
 #[tauri::command]
 fn content(file: String, session: Option<String>) -> ContentOut {
     arrow::file_content(&projects_dir(), &file, session.as_deref())
+}
+
+/// Editors detected on `$PATH`, for the "Open in editor" picker. Tauri-only
+/// (the browser dev-server has no equivalent — opening a local editor only
+/// makes sense from the native app).
+#[tauri::command]
+fn editors() -> Vec<editor::EditorOut> {
+    editor::detect_editors()
+}
+
+/// Open `file` at `line`:`col` in the chosen editor (fire-and-forget). Delegates
+/// to the editor's CLI; arrow never embeds one. Returns an error string the UI
+/// can surface if the editor isn't found or fails to launch.
+#[tauri::command]
+fn open_in_editor(editor_id: String, file: String, line: i64, col: i64) -> Result<(), String> {
+    editor::open_in_editor(&editor_id, &file, line, col)
 }
 
 /// Watcher nativo: vigila `~/.claude/projects` y, con debounce, emite
@@ -116,7 +134,12 @@ pub fn run() {
     }
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![report, content])
+        .invoke_handler(tauri::generate_handler![
+            report,
+            content,
+            editors,
+            open_in_editor
+        ])
         .setup(|app| {
             spawn_watcher(app.handle().clone());
             // macOS: restaurar la decoración nativa (semáforos rojo/amarillo/verde). En

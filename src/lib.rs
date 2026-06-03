@@ -149,6 +149,11 @@ pub struct ContentOut {
     pub after_available: bool,
     pub user_modified: bool,
     pub ops: usize,
+    /// 1-based earliest changed line in the AFTER file (min `newStart` across all
+    /// of the session's edits to this file). For "Open in editor" to jump to the
+    /// first change. `None` when there are no hunks (e.g. a `create`). Points at
+    /// the current on-disk file, not the reconstructed before.
+    pub first_changed_line: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +268,16 @@ pub fn file_content(projects_dir: &str, file: &str, session: Option<&str>) -> Co
 
     let before = resolve_before(&scan.edits, scan.read_before.as_deref(), &after);
     let before_available = before.is_some();
+    // Earliest changed line (after side) across all of this session's edits, so
+    // "Open in editor" lands on the first change instead of the file top. The
+    // hunks exist regardless of whether the `before` could be reconstructed.
+    let first_changed_line = scan
+        .edits
+        .iter()
+        .flat_map(|e| e.hunks.iter())
+        .map(|h| h.new_start)
+        .filter(|&n| n >= 1)
+        .min();
     ContentOut {
         file: target,
         session: session.map(str::to_string),
@@ -272,6 +287,7 @@ pub fn file_content(projects_dir: &str, file: &str, session: Option<&str>) -> Co
         after_available,
         user_modified: scan.user_modified,
         ops: scan.ops,
+        first_changed_line,
     }
 }
 
@@ -1538,6 +1554,39 @@ mod tests {
         assert_eq!(out.before, "", "el before de un create es vacío");
         assert_eq!(out.after, "brand new content\n");
         assert_eq!(out.ops, 1);
+    }
+
+    #[test]
+    fn file_content_expone_primera_linea_cambiada() {
+        // first_changed_line = el menor newStart entre todos los hunks (lado after),
+        // para que "Open in editor" salte al primer cambio, no al inicio del archivo.
+        let dir = tmpdir("firstline");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("Comp.tsx");
+        fs::write(&file, "a\nb\nc\n").unwrap();
+        let fp = file.to_str().unwrap();
+        // Dos hunks con newStart 5 y 2 (orden de archivo arbitrario): min = 2.
+        let edit = json!({
+            "type": "user", "sessionId": "s1", "cwd": repo.to_str().unwrap(),
+            "gitBranch": "main", "timestamp": "2026-06-02T00:00:00Z",
+            "toolUseResult": {
+                "filePath": fp, "userModified": false, "originalFile": "a\nb\nc\n",
+                "structuredPatch": [
+                    { "oldStart": 5, "oldLines": 1, "newStart": 5, "newLines": 1, "lines": ["-x", "+y"] },
+                    { "oldStart": 2, "oldLines": 1, "newStart": 2, "newLines": 1, "lines": ["-b", "+B"] }
+                ],
+            }
+        })
+        .to_string();
+        write_top_level(&dir, "proj", "s1", &[edit]);
+
+        let out = file_content(dir.to_str().unwrap(), fp, Some("s1"));
+        assert_eq!(
+            out.first_changed_line,
+            Some(2),
+            "la primera línea cambiada es el menor newStart"
+        );
     }
 
     #[test]

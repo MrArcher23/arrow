@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { Report, FileContent } from './types'
+import type { Report, FileContent, Editor } from './types'
 
 // Única capa que conoce el transporte. Dos modos, MISMO contrato:
 //   - App de escritorio (Tauri): llama al backend Rust vía invoke() — sin HTTP.
@@ -44,4 +44,21 @@ export async function loadContent(file: string, session?: string | null): Promis
   }
   contentCache.set(key, data)
   return data
+}
+
+// "Open in editor" — Tauri-only: opening a local editor only makes sense from
+// the native app, so these no-op / return empty in the browser dev mode.
+export async function detectEditors(): Promise<Editor[]> {
+  if (!inTauri) return []
+  return invoke<Editor[]>('editors')
+}
+
+export async function openInEditor(
+  editorId: string,
+  file: string,
+  line: number,
+  col = 1
+): Promise<void> {
+  if (!inTauri) throw new Error('Open in editor is only available in the desktop app')
+  await invoke('open_in_editor', { editorId, file, line, col })
 }
