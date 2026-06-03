@@ -119,6 +119,16 @@
     localStorage.setItem('arrow.theme', theme)
   })
 
+  // Whether the (session, path) still exists in a freshly fetched report. Used to decide if the
+  // open diff can be refreshed in place — a session can age out or a file stop being touched.
+  function fileStillInReport(r: Report, sel: { session: string; path: string }): boolean {
+    return r.repos.some((repo) =>
+      repo.sessions.some(
+        (s) => s.sessionId === sel.session && s.files.some((f) => f.path === sel.path)
+      )
+    )
+  }
+
   let lastJson = ''
   async function refresh(initial: boolean) {
     try {
@@ -136,6 +146,19 @@
         const s = r.repos[0]?.sessions[0]
         const f = s?.files[0]
         if (s && f) select(s.sessionId, f.path)
+      } else if (selected && fileStillInReport(r, selected)) {
+        // Live refresh closes the loop: re-fetch the OPEN file's diff in place. Same selection
+        // (no focus steal), and no blank flash — unlike select(), we keep the current diff shown
+        // and swap only when the fresh content actually differs. clearContentCache() above makes
+        // this fetch fresh; the equality guard means editing some OTHER file won't reset the
+        // CodeMirror diff of the file we're looking at. Best-effort: a failed fetch leaves the
+        // prior diff in place and the next refresh retries.
+        try {
+          const fresh = await loadContent(selected.path, selected.session)
+          if (JSON.stringify(fresh) !== JSON.stringify(content)) content = fresh
+        } catch {
+          /* keep showing the prior diff; the next refresh will retry */
+        }
       }
     } catch (e) {
       error = String(e)
