@@ -12,6 +12,7 @@
 //! differently and are left for when those platforms ship.
 
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
 use serde::Serialize;
 
@@ -226,15 +227,30 @@ pub fn detect_editors() -> Vec<EditorOut> {
 /// Open `file` at `line`:`col` in the editor identified by `id`. Fire-and-forget
 /// (does not block the UI). Builds argv as SEPARATE arguments — never a shell
 /// string — to dodge the documented `-g` breakage on paths with spaces
-/// (microsoft/vscode#39891, cursor/cursor#3796). `file` must be absolute (arrow
-/// already resolves real paths). Opens the CURRENT on-disk file, so `line` is
-/// the after-side `firstChangedLine`, not the reconstructed before.
+/// (microsoft/vscode#39891, cursor/cursor#3796). Opens the CURRENT on-disk file,
+/// so `line` is the after-side `firstChangedLine`, not the reconstructed before.
+/// Rejects a non-absolute path or one that no longer exists on disk — honest: it
+/// never claims to open a file that isn't there (and never fabricates one).
 pub fn open_in_editor(id: &str, file: &str, line: i64, col: i64) -> Result<(), String> {
     let def = EDITORS
         .iter()
         .find(|e| e.id == id)
         .ok_or_else(|| format!("unknown editor: {id}"))?;
     let bin = resolve(def).ok_or_else(|| format!("editor '{}' is not on PATH", def.name))?;
+
+    // Honesty + safety: only open a real, current on-disk file. `is_absolute`
+    // also closes any option-injection vector (an absolute path can't begin with
+    // `-`); `exists` stops us from launching the editor on a deleted/moved path
+    // (which would silently fabricate a phantom file in the VS Code family) and
+    // from reporting success when there is nothing to open.
+    let target = Path::new(file);
+    if !target.is_absolute() {
+        return Err(format!("refusing to open non-absolute path: {file}"));
+    }
+    if !target.exists() {
+        return Err(format!("file no longer on disk: {file}"));
+    }
+
     let line = line.max(1);
     let col = col.max(1);
 
@@ -254,9 +270,23 @@ pub fn open_in_editor(id: &str, file: &str, line: i64, col: i64) -> Result<(), S
                 .arg(file);
         }
     }
-    // Spawn and detach: we don't wait, and dropping the Child does not kill the
-    // editor on Unix. A failed spawn is reported back to the UI.
-    cmd.spawn()
-        .map(|_| ())
-        .map_err(|e| format!("failed to launch {}: {e}", def.name))
+    // Detach the child's stdio so a chatty launcher can't write into arrow's
+    // terminal (relevant when arrow is run from a shell / the AppImage).
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // Fire-and-forget, but REAP the child. Most editor CLIs hand off to a running
+    // instance and exit within milliseconds; if we dropped the Child it would
+    // linger as a zombie (defunct) in arrow's process table — one per click, for
+    // arrow's whole lifetime. Waiting on a detached thread collects it without
+    // blocking the UI. (Dropping the Child does not kill the editor on Unix, so
+    // this only changes reaping, not the editor's lifetime.)
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to launch {}: {e}", def.name))?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }

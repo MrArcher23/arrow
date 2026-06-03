@@ -290,7 +290,11 @@
           {#if content?.userModified}
             <span class="warn">⚠ modified outside Claude</span>
           {/if}
-          <OpenInEditor path={selected.path} line={content?.firstChangedLine ?? null} />
+          <OpenInEditor
+            path={selected.path}
+            line={content?.firstChangedLine ?? null}
+            afterAvailable={content?.afterAvailable === true}
+          />
         </div>
       {/if}
       <div class="diff-area">
