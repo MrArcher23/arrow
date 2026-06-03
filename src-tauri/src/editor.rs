@@ -42,6 +42,10 @@ struct EditorDef {
 /// Terminal editors (vim/nvim/helix/nano) are intentionally omitted: a GUI app
 /// can't spawn them without a controlling TTY (they'd need a terminal-emulator
 /// host), so they're deferred.
+///
+/// The VS Code family and Zed are verified live; the JetBrains, Sublime and Kate
+/// rows use their documented CLI contracts but are unverified on the dev machine
+/// (best-effort until tested on a box that has them).
 const EDITORS: &[EditorDef] = &[
     // VS Code family — all inherit upstream's `-g file:line:col`.
     EditorDef {

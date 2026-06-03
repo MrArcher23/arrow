@@ -6,7 +6,7 @@ backlog de ideas que aún no están comprometidas a ninguna fase. Las **convenci
 están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 
 > Última actualización: 2026-06-03 (Fase 2 + pulido + mejoras visuales: zoom, titlebar custom, foco por
-> sesión activa, orden de archivos por recencia de edición y tick de reloj para el tiempo relativo).
+> sesión activa, orden de archivos por recencia, tick de reloj para el tiempo relativo, y "Open in editor").
 
 ## Estado actual
 
@@ -19,7 +19,7 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 | 4 — edición + GitHub | ⏳ postergado | Ver README. |
 
 ### Pulido aplicado (post-Fase 2)
-- **Tests del parser**: 19 tests unitarios en `src/lib.rs` (`#[cfg(test)] mod tests`) con
+- **Tests del parser**: 20 tests unitarios en `src/lib.rs` (`#[cfg(test)] mod tests`) con
   transcripts-fixture en tempdir. Cubren lo NO obvio: parsing defensivo, solo-top-level, agrupación
   por raíz git, conteo +/-, filtro de `~/.claude/`, orden de repos y de archivos por recencia,
   metadatos, `file_content`. Correr con `cargo test --release`. Complementan a `/verify-parser` (datos reales).
@@ -75,6 +75,30 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
   Svelte 5 recalcula solo las etiquetas, no el árbol). Se **pausa con `visibilitychange`** cuando la
   ventana se oculta y se pone al día al volver al foco. Costo: una decena de strings recalculados cada
   30 s — más barato que el poll de respaldo de 15 s que ya existía.
+
+- **"Open in editor"** (rama `feat/open-in-editor`; salto de la auditoría al editor real — la imagen-espejo
+  de `/ide`): un botón en la barra de archivo abre el archivo seleccionado en el editor del usuario, en la
+  **primera línea cambiada**, delegando en el CLI del editor. arrow NO embebe editor ni LSP → sigue ligero.
+  Detección por `$PATH` (`detect_editors`) sobre una **tabla de editores = dato** (`src-tauri/src/editor.rs`);
+  apertura por familia de sintaxis (`open_in_editor`): VS Code `-g {file}:{line}:{col}`, Zed/Sublime
+  posicional, JetBrains `--line/--column`. **argv directo, sin shell** (evita el bug de espacios
+  vscode#39891 / cursor#3796). El parser expone `firstChangedLine` (menor `newStart`, lado after) en
+  `ContentOut`. Frontend: `detectEditors`/`openInEditor` en `api.ts` (Tauri-only) + `OpenInEditor.svelte`
+  (picker que recuerda la elección en localStorage). **Honestidad**: abre el archivo **actual en disco**
+  (after), no el snapshot histórico. Verificado en vivo con VS Code, Kiro, Antigravity, Antigravity IDE y
+  Zed. Test: `file_content_expone_primera_linea_cambiada`.
+  - **Default de editor**: por ahora *recordado (localStorage) || primero detectado* — decisión deliberada
+    (el recordado ya basta: reabrir la app conserva tu elección). Un "default inteligente" (abrir en el IDE
+    conectado a Claude vía `~/.claude/ide/*.lock`, o respetar `$EDITOR`/`$VISUAL`) queda como mejora futura.
+  - **Diferido (documentado, fuera del MVP):**
+    - **Editores de terminal** (nvim/helix/nano/emacs-tui): omitidos a propósito. Una app GUI no les da TTY;
+      necesitarían un **emulador de terminal anfitrión** (`<term> -e nvim +line file`) cuya invocación NO está
+      estandarizada (gnome-terminal `--`, konsole/alacritty/kitty `-e`…) → requeriría un setting `terminal`.
+      Escapes sin-TTY si se retoma: `emacsclient -c`, `gvim`, `neovide`.
+    - **JetBrains / Sublime / Kate**: ya están en la tabla (plantillas de su doc oficial) pero **sin verificar**
+      en esta máquina (no instalados) → best-effort.
+    - **macOS / Windows**: las plantillas por familia ya son cross-plataforma; solo cambia la **resolución del
+      binario** (mac: `open -a`/bundle id; Win: `.cmd`). Pendiente para cuando esas plataformas se empaqueten.
 
 ## Backlog de ideas (sin comprometer fase)
 

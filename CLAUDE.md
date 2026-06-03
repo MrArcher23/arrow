@@ -23,7 +23,7 @@ empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web 
   / `npm run build` **sin** `--prefix web` (un `--prefix web` buscaría `web/web/package.json` y falla).
   `src-tauri/` es su **propia raíz de workspace**: `cargo build` en la raíz NO arrastra el backend Tauri.
 - Build del frontend: `npm --prefix web run build`.
-- **Tests**: 19 tests unitarios del parser en `src/lib.rs` (`cargo test --release`). Complementan
+- **Tests**: 20 tests unitarios del parser en `src/lib.rs` (`cargo test --release`). Complementan
   —no reemplazan— la verificación contra datos reales del skill `/verify-parser`.
 
 ## Modelo de datos (lo NO obvio — léelo antes de tocar el parser)
@@ -34,6 +34,12 @@ empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web 
   sin fecha al final, desempate por path; ver `build_report_from`) — mismo split que repos/sesiones: el
   `--list` (terminal) sigue alfabético. El `--list` itera el `BTreeMap` interno (por path); la recencia
   vive solo en `build_report_from`.
+- **"Open in editor"** (botón en la barra de archivo, **Tauri-only**): tabla de editores = **dato** en
+  `src-tauri/src/editor.rs`; apertura por familia de sintaxis (VS Code `-g {file}:{line}:{col}`,
+  Zed/Sublime posicional, JetBrains `--line/--column`), **argv directo sin shell** (bug de espacios
+  vscode#39891). Salta a `ContentOut.firstChangedLine` (menor `newStart`, lado after). **Honesto**: abre
+  el archivo **actual en disco** (after), no el snapshot reconstruido. Editores de terminal NO soportados
+  (sin TTY desde una app GUI). Ver ROADMAP para los diferidos.
 - Diff = `toolUseResult.structuredPatch` (hunks). `--content` reconstruye before / after (disco).
   El **before** = estado previo a la 1ª edición de la sesión, resuelto en cascada (`resolve_before`):
   (0) si el 1er Edit es un `create` (Write de archivo nuevo) ⇒ before vacío ("new file"); (1) `originalFile`
