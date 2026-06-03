@@ -41,4 +41,11 @@ export interface FileContent {
   afterAvailable: boolean
   userModified: boolean
   ops: number
+  firstChangedLine: number | null // 1-based earliest changed line (after side); null if none
+}
+
+// An editor detected on the user's machine (for "Open in editor"). Tauri-only.
+export interface Editor {
+  id: string
+  name: string
 }
