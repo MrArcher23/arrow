@@ -5,7 +5,8 @@ Archivo de seguimiento entre sesiones. El **roadmap canónico de fases** vive en
 backlog de ideas que aún no están comprometidas a ninguna fase. Las **convenciones** del proyecto
 están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 
-> Última actualización: 2026-05-30 (Fase 2 + pulido + mejoras visuales: zoom, titlebar custom, y foco por sesión activa).
+> Última actualización: 2026-06-03 (Fase 2 + pulido + mejoras visuales: zoom, titlebar custom, foco por
+> sesión activa, orden de archivos por recencia de edición y tick de reloj para el tiempo relativo).
 
 ## Estado actual
 
@@ -18,10 +19,10 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 | 4 — edición + GitHub | ⏳ postergado | Ver README. |
 
 ### Pulido aplicado (post-Fase 2)
-- **Tests del parser**: 9 tests unitarios en `src/lib.rs` (`#[cfg(test)] mod tests`) con
+- **Tests del parser**: 19 tests unitarios en `src/lib.rs` (`#[cfg(test)] mod tests`) con
   transcripts-fixture en tempdir. Cubren lo NO obvio: parsing defensivo, solo-top-level, agrupación
-  por raíz git, conteo +/-, filtro de `~/.claude/`, orden por recencia, metadatos, `file_content`.
-  Correr con `cargo test --release`. Complementan a `/verify-parser` (datos reales).
+  por raíz git, conteo +/-, filtro de `~/.claude/`, orden de repos y de archivos por recencia,
+  metadatos, `file_content`. Correr con `cargo test --release`. Complementan a `/verify-parser` (datos reales).
 - **Watcher resiliente** (`src-tauri/src/lib.rs`): reintenta establecer el watch si
   `~/.claude/projects` no existe aún o se borra y recrea (antes se rendía para siempre). El polling
   del frontend sigue siendo el respaldo último.
@@ -60,6 +61,20 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
   ancla al timestamp del dato (no al reloj). Nota del modelo: una sesión (mismo `sessionId`) vive en
   UN repo (raíz git del cwd), así que el foco son ≥1 repo según cuántas sesiones recientes haya en la
   ráfaga, no "una sesión tocando varios repos".
+- **Archivos ordenados por recencia de edición** (no alfabético): dentro de una sesión, el archivo
+  editado más recientemente va arriba y re-tocar uno lo vuelve a subir al tope en el siguiente
+  refresco. El parser (`build_report_from` en `src/lib.rs`) ahora rastrea `last_ts` por archivo
+  (`FileChange`) y emite `lastTouched` en `FileOut`, ordenando los archivos desc (sin fecha al final,
+  desempate por path). Mismo split que repos/sesiones: el contrato `--json`/UI va por recencia, el
+  `--list` (terminal) sigue alfabético/browsable. Cada fila de archivo muestra su "Nm ago"
+  (`Sidebar.svelte`). Anclado al **dato** (timestamp), no al reloj. Test: `archivos_ordenados_por_ultima_edicion`.
+- **Tick de reloj para el tiempo relativo** (resuelve la deuda de abajo): un `setInterval` de 30 s en
+  `App.svelte` reasigna un `now` reactivo que se pasa a `relative()`/`isLive()` (`web/src/lib/time.ts`)
+  y al `Sidebar` (prop `now`), así los "Nm ago" envejecen y el **punto verde** caduca a los 20 min sin
+  esperar una edición nueva. Es **display-only**: no refetcha ni reordena (la reactividad granular de
+  Svelte 5 recalcula solo las etiquetas, no el árbol). Se **pausa con `visibilitychange`** cuando la
+  ventana se oculta y se pone al día al volver al foco. Costo: una decena de strings recalculados cada
+  30 s — más barato que el poll de respaldo de 15 s que ya existía.
 
 ## Backlog de ideas (sin comprometer fase)
 
@@ -85,9 +100,11 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
   reciente) + ráfaga ~10 min"; el **punto verde** quedó como único indicador (se quitó el badge de
   texto `live`). Sigue honesto: "activa" = actividad más reciente en disco, no proceso vivo. Bonus: el
   foco se ancla al **dato** (no al reloj), así que no sufre el congelamiento de tiempo relativo (abajo).
-- **Tiempo relativo congelado**: `relative()`/`isLive()` solo se recalculan al re-render; si el
-  report no cambia, el "Nm ago" no avanza. Un tick de reloj independiente lo resolvería (también
-  anotado en SPEC.md).
+- **Tiempo relativo congelado** — ✅ resuelto (ver "Mejoras visuales / UX"). `relative()`/`isLive()`
+  solo se recalculaban al re-render; si el report no cambiaba, el "Nm ago" no avanzaba y el punto verde
+  no caducaba. Ahora un tick de reloj independiente (30 s, `App.svelte`) reasigna un `now` reactivo que
+  reciben `relative()`/`isLive()` y el `Sidebar`; se pausa con la ventana oculta. Display-only (no
+  refetcha ni reordena). La nota de diseño en SPEC.md quedó actualizada (decisión (b) tomada).
 - **Reconstrucción del `before` cuando `originalFile` es `null`** — ✅ resuelto (fix
   `before-null-originalfile`). Claude Code emite `originalFile:null` en parte de los Edit aunque
   haya `structuredPatch`; antes eso hacía que un archivo existente se pintara como "new file" (una

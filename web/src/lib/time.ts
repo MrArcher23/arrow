@@ -11,11 +11,16 @@ const LIVE_WINDOW = 20 * MIN
 // reloj, así el foco no envejece solo entre refrescos.
 const BURST_WINDOW = 10 * MIN
 
-export function isLive(iso?: string | null): boolean {
+// `now` is a parameter (default = wall clock) so callers can pass a reactive
+// clock tick: that way the "Nm ago" labels and the green dot keep aging and
+// expire after LIVE_WINDOW even when the report itself hasn't changed (relative
+// times otherwise freeze, since they only recompute on re-render). See the
+// 30s tick in App.svelte.
+export function isLive(iso?: string | null, now: number = Date.now()): boolean {
   if (!iso) return false
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return false
-  return Date.now() - t < LIVE_WINDOW
+  return now - t < LIVE_WINDOW
 }
 
 // Repos en foco: el de la sesión activa (actividad globalmente más reciente, = repos[0]
@@ -34,11 +39,11 @@ export function focusRepos(repos: Repo[]): Repo[] {
   })
 }
 
-export function relative(iso?: string | null): string {
+export function relative(iso?: string | null, now: number = Date.now()): string {
   if (!iso) return ''
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return ''
-  const d = Date.now() - t
+  const d = now - t
   if (d < MIN) return 'now'
   if (d < HOUR) return `${Math.floor(d / MIN)}m ago`
   if (d < DAY) return `${Math.floor(d / HOUR)}h ago`

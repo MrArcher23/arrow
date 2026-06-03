@@ -5,9 +5,10 @@
   interface Props {
     report: Report
     selected: { session: string; path: string } | null
+    now: number // reloj reactivo (tick en App.svelte): envejece los "Nm ago" y el punto verde
     onSelect: (session: string, path: string) => void
   }
-  let { report, selected, onSelect }: Props = $props()
+  let { report, selected, now, onSelect }: Props = $props()
 
   // Foco: los repos de la sesión activa (la de actividad más reciente) + cualquiera tocado
   // en la misma ráfaga (~10 min). El resto va a "Other repos". Lógica única en time.ts.
@@ -75,6 +76,7 @@
 
 {#snippet fileRow(sessionId: string, f: any, deep: boolean, root: string)}
   {@const dir = shortDir(relDir(f.path, root))}
+  {@const ft = relative(f.lastTouched, now)}
   <button
     class="row file"
     class:deep
@@ -84,8 +86,11 @@
   >
     <span class="fname">{basename(f.path)}</span>
     {#if dir}<span class="fdir">{dir}</span>{/if}
-    <span class="stats"><span class="add">+{f.added}</span><span class="del">-{f.removed}</span></span>
-    {#if f.userModified}<span class="flag" title="Modified outside Claude">⚠</span>{/if}
+    <span class="meta">
+      {#if ft}<span class="ftime">{ft}</span>{/if}
+      <span class="stats"><span class="add">+{f.added}</span><span class="del">-{f.removed}</span></span>
+      {#if f.userModified}<span class="flag" title="Modified outside Claude">⚠</span>{/if}
+    </span>
   </button>
 {/snippet}
 
@@ -93,7 +98,7 @@
   {@const current = repo.sessions[0]}
   {@const rest = repo.sessions.slice(1)}
   <!-- Punto verde: solo en repos del foco que además tienen actividad reciente (no glow falso si es viejo). -->
-  {@const live = inFocus && isLive(current?.lastActivity)}
+  {@const live = inFocus && isLive(current?.lastActivity, now)}
   <div class="repo">
     <button class="row repo-head" onclick={() => (openRepos = toggle(openRepos, repo.cwd))} title={repo.cwd}>
       <span class="chev">{openRepos[repo.cwd] ? '▾' : '▸'}</span>
@@ -106,7 +111,7 @@
       {#if current}
         <div class="current-head">
           <span class="stitle" title={titleOf(current)}>{titleOf(current)}</span>
-          <span class="time">{relative(current.lastActivity)}</span>
+          <span class="time">{relative(current.lastActivity, now)}</span>
         </div>
         {#each current.files as f}
           {@render fileRow(current.sessionId, f, false, repo.cwd)}
@@ -133,7 +138,7 @@
                 <button class="row hist-session" onclick={() => (openSess = toggle(openSess, skey))} title={titleOf(s)}>
                   <span class="chev">{openSess[skey] ? '▾' : '▸'}</span>
                   <span class="stitle small">{titleOf(s)}</span>
-                  <span class="time">{relative(s.lastActivity)}</span>
+                  <span class="time">{relative(s.lastActivity, now)}</span>
                 </button>
                 {#if openSess[skey]}
                   {#each s.files as f}
@@ -275,8 +280,21 @@
     color: var(--dim);
     opacity: 0.6;
   }
-  .stats {
+  /* Cluster de metadata a la derecha de la fila de archivo: "Nm ago" + +/− + ⚠.
+     margin-left:auto lo ancla a la derecha tanto si hay carpeta (fdir crece) como si no. */
+  .meta {
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .ftime {
+    font-size: 10px;
+    color: var(--dim);
+    white-space: nowrap;
+  }
+  .stats {
     font-family: var(--mono);
     font-size: 11px;
     display: flex;

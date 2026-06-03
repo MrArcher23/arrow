@@ -90,14 +90,18 @@ Compartir el código del parser entre la CLI existente y el backend de Tauri (NO
      - Una sesión **sin** ediciones (sin `toolUseResult.filePath`) **no aparece**: arrow es un visor
        de archivos tocados, no un monitor de procesos; solo se lista al primer `Edit`/`Write`/`MultiEdit`
        (`src/main.rs` solo crea la sesión en la rama de cambio de archivo, no con metadatos sueltos).
-     - El refresco web actual (polling 5 s en `App.svelte`) **cortocircuita el re-render** cuando el
-       report no cambia (`if (txt === lastJson) return`); como `relative()`/`isLive()` solo se
-       recalculan al re-renderizar, el `"Nm ago"` y el badge `live` se **congelan** hasta que una
-       edición mueva el report (el badge no caduca a los 20 min por sí solo).
-     Al introducir el watcher + evento `report-changed`, decidir: (a) ¿`live` sigue siendo
-     "actividad reciente" o pasa a "proceso de Claude activo" (necesitaría una señal del sistema)?;
-     (b) añadir un tick de reloj independiente para que el tiempo relativo y la caducidad de `live`
-     avancen aunque el report no cambie. El badge no debe sugerir más de lo que sabe (honestidad).
+     - El refresco (polling + watcher) **cortocircuita el re-render** cuando el report no cambia
+       (`if (txt === lastJson) return`); como `relative()`/`isLive()` solo se recalculan al
+       re-renderizar, el `"Nm ago"` y el punto verde se **congelaban** hasta que una edición moviera
+       el report. **✅ Resuelto** (decisión (b), ver abajo): un tick de reloj independiente los hace
+       avanzar/caducar solo.
+     Decisiones tomadas al cablear el refresco: (a) `live` sigue siendo **"actividad reciente"**, NO
+     "proceso de Claude activo" (eso necesitaría una señal del sistema que arrow no tiene) — el punto
+     verde no sugiere más de lo que el dato sabe (honestidad). (b) **Implementado** un tick de reloj
+     independiente (`setInterval` 30 s en `App.svelte` → `now` reactivo pasado a `relative()`/`isLive()`
+     y al `Sidebar`) para que el tiempo relativo avance y el punto verde caduque a los 20 min aunque el
+     report no cambie. Es display-only (no refetcha ni reordena; la reactividad granular de Svelte 5
+     recalcula solo las etiquetas) y se pausa con `visibilitychange` cuando la ventana se oculta.
 
 ## Prerrequisitos (Linux)
 
