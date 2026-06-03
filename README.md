@@ -13,10 +13,11 @@
 opening an IDE, without AI chat, and **without depending on git or hooks**.
 
 > Status: **Phase 2 complete + polish — released on Linux
-> ([v0.1.3](https://github.com/MrArcher23/arrow/releases/latest))**. A desktop app (Tauri 2.x) with
+> ([v0.1.4](https://github.com/MrArcher23/arrow/releases/latest))**. A desktop app (Tauri 2.x) with
 > the Rust parser as its native backend, **already usable day to day** on Linux (`.deb` + AppImage).
-> Phases 0 (parser/CLI), 1 (web UI) and 2 (packaging) are complete; since then: 19 parser tests, a
-> resilient watcher, zoom, a custom titlebar, active-session focus, live diff-panel refresh, files
+> Phases 0 (parser/CLI), 1 (web UI) and 2 (packaging) are complete; since then: 20 parser tests, a
+> resilient watcher, zoom, a custom titlebar, active-session focus, live diff-panel refresh,
+> open-in-editor (jump from a diff straight into your editor at the first change), files
 > ordered by most-recent edit (with relative times that age in place via a clock tick), macOS
 > adaptation, and a robust diff-"before" reconstruction (shows a real diff even on Claude Code's
 > `originalFile: null` edits, instead of mislabeling an edited file as new). Phases 3 (honesty + git)
@@ -159,6 +160,12 @@ cargo tauri build
   one. The **green dot** marks those focused repos with recent activity (the redundant `live` text
   badge was removed). Honest: "active session" = *most recent activity on disk*, not *a running
   process* (arrow cannot know the latter).
+- **Open in editor**: a button in the file bar opens the selected file in your own editor at the
+  first changed line. It detects installed editors (the VS Code family — incl. Cursor, Windsurf,
+  Kiro, Antigravity — plus Zed, JetBrains, Sublime, Kate) and **delegates to the editor's CLI**;
+  arrow never embeds an editor or a language server (the mirror image of Claude Code's `/ide`).
+  Honest: it opens the **current on-disk file** (and is disabled when that file is gone), never the
+  reconstructed snapshot.
 - **Window and zoom**: a custom titlebar (`decorations:false`) with minimize/maximize/close buttons,
   drag, and double-click to maximize — guaranteeing *cross-distro* controls (on GNOME/Pop!_OS the WM
   doesn't paint them reliably). VSCode-style UI zoom with `Ctrl +/−/0`: native to the webview
@@ -172,7 +179,7 @@ cargo tauri build
 The parser lives in a **library** (`src/lib.rs`): pure functions `build_report(projects_dir)` and
 `file_content(projects_dir, file, session)` + the serializable structs. Two frontends consume it:
 `src/main.rs` (the CLI, with flags intact) and `src-tauri/` (the desktop backend). Zero duplicated
-logic; the same source of truth for terminal, web, and native app. The parser ships **19 unit tests**
+logic; the same source of truth for terminal, web, and native app. The parser ships **20 unit tests**
 (`cargo test`) over fixture transcripts in a tempdir, covering the non-obvious parts: defensive
 parsing, top-level transcripts only, grouping by git root, `+/−` counting, filtering of
 `~/.claude/`, recency ordering (repos, sessions, and files within a session), and the diff-"before" reconstruction cascade (inline `originalFile`,

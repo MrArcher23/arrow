@@ -76,7 +76,7 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
   ventana se oculta y se pone al día al volver al foco. Costo: una decena de strings recalculados cada
   30 s — más barato que el poll de respaldo de 15 s que ya existía.
 
-- **"Open in editor"** (rama `feat/open-in-editor`; salto de la auditoría al editor real — la imagen-espejo
+- **"Open in editor"** (v0.1.4, endurecido tras auditoría adversarial pre-release; salto de la auditoría al editor real — la imagen-espejo
   de `/ide`): un botón en la barra de archivo abre el archivo seleccionado en el editor del usuario, en la
   **primera línea cambiada**, delegando en el CLI del editor. arrow NO embebe editor ni LSP → sigue ligero.
   Detección por `$PATH` (`detect_editors`) sobre una **tabla de editores = dato** (`src-tauri/src/editor.rs`);
