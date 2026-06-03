@@ -12,14 +12,14 @@
 *which files did Claude touch, in which repo, with what diff, and in which session?* — without
 opening an IDE, without AI chat, and **without depending on git or hooks**.
 
-> Status: **Phase 2 complete + polish — first release out
-> ([v0.1.1](https://github.com/MrArcher23/arrow/releases/latest), Linux)**. A desktop app (Tauri 2.x)
-> with the Rust parser as its native backend, **already usable day to day** on Linux (`.deb` +
-> AppImage). Phases 0 (parser/CLI), 1 (web UI) and 2 (packaging) are complete; since then: 18 parser
-> tests, a resilient watcher, zoom, a custom titlebar, active-session focus, macOS adaptation, and a
-> robust diff-"before" reconstruction (shows a real diff even on Claude Code's `originalFile: null`
-> edits, instead of mislabeling an edited file as new). Phases 3 (honesty + git) and 4 (editing) are
-> pending — details in [ROADMAP.md](ROADMAP.md).
+> Status: **Phase 2 complete + polish — released on Linux
+> ([v0.1.2](https://github.com/MrArcher23/arrow/releases/latest))**. A desktop app (Tauri 2.x) with
+> the Rust parser as its native backend, **already usable day to day** on Linux (`.deb` + AppImage).
+> Phases 0 (parser/CLI), 1 (web UI) and 2 (packaging) are complete; since then: 18 parser tests, a
+> resilient watcher, zoom, a custom titlebar, active-session focus, live diff-panel refresh, macOS
+> adaptation, and a robust diff-"before" reconstruction (shows a real diff even on Claude Code's
+> `originalFile: null` edits, instead of mislabeling an edited file as new). Phases 3 (honesty + git)
+> and 4 (editing) are pending — details in [ROADMAP.md](ROADMAP.md).
 
 ## Install (Linux)
 
