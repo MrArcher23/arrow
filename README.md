@@ -7,6 +7,7 @@
 [![CI](https://github.com/MrArcher23/arrow/actions/workflows/ci.yml/badge.svg)](https://github.com/MrArcher23/arrow/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/MrArcher23/arrow?sort=semver)](https://github.com/MrArcher23/arrow/releases/latest)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black)](#install-linux)
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS-000?logo=apple&logoColor=white)](#install-macos)
 
 **An audit viewer for Claude Code.** It answers a single question, reliably:
 *which files did Claude touch, in which repo, with what diff, and in which session?* — without
@@ -25,10 +26,10 @@ opening an IDE, without AI chat, and **without depending on git or hooks**.
 
 ## Install (Linux)
 
-> **Linux x86-64 only for now.** Pre-built bundles are published for Linux; **macOS and Windows are
-> not built yet** (the code already adapts to macOS — see [MACOS.md](MACOS.md) — it's a build-runner
-> and signing matter, tracked in the [roadmap](ROADMAP.md)). On other platforms, build from source
-> (see *Desktop app* below).
+> **Linux (x86-64) and macOS (Apple Silicon + Intel) have pre-built bundles.** Windows is **not
+> built yet**; build from source there (see *Desktop app* below). The macOS `.dmg` is **unsigned**
+> (no Apple notarization yet — see [MACOS.md](MACOS.md) and the [roadmap](ROADMAP.md)), so the first
+> launch needs one extra step (covered in [Install (macOS)](#install-macos)).
 
 Grab the latest from the [**Releases**](https://github.com/MrArcher23/arrow/releases/latest) page:
 
@@ -44,6 +45,33 @@ chmod +x arrow_*_amd64.AppImage
 
 The bundles are built on Ubuntu 22.04, so they run on **glibc ≥ 2.35** (Ubuntu/Pop!_OS 22.04+,
 Debian 12+, Fedora 37+, and newer). On older systems, build from source.
+
+## Install (macOS)
+
+> Apple Silicon and Intel Macs both have a published `.dmg`. The app is **unsigned** (no Apple
+> notarization yet), so macOS Gatekeeper would normally block the first launch — the one-liner below
+> handles that for you.
+
+**One-liner (recommended):** downloads the right `.dmg` for your chip from the latest release,
+installs `arrow.app` into `/Applications`, and clears the Gatekeeper quarantine flag:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/MrArcher23/arrow/main/install.sh)"
+```
+
+> The installer strips the quarantine attribute of an **unsigned** binary so it opens without
+> friction — only run it if you trust this source. To **update**, re-run the one-liner; to
+> **uninstall**, `rm -rf /Applications/arrow.app`. (There is no auto-update / package manager yet —
+> a Homebrew Cask is on the [roadmap](ROADMAP.md).)
+
+**Manual:** grab the `.dmg` for your chip (`_aarch64` = Apple Silicon, `_x64` = Intel) from the
+[**Releases**](https://github.com/MrArcher23/arrow/releases/latest) page, open it, and drag arrow to
+**Applications**. Because the app is unsigned, the first launch needs **right-click → Open** (once),
+or clear the flag manually:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/arrow.app
+```
 
 ## Why it exists
 

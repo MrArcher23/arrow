@@ -128,14 +128,23 @@ Developer (~99 USD/año) — fuera del alcance de este MVP.
 
 ## Build en CI (sin Mac)
 
-Si en el futuro no se dispone de una Mac, la vía es **GitHub Actions con un runner `macos`**
-(`tauri-apps/tauri-action`), que compila el `.dmg` en la nube al hacer push/tag y lo publica
-como artifact o Release. No está configurado todavía; queda anotado en el backlog del
-[ROADMAP.md](ROADMAP.md).
+**Ya configurado.** `.github/workflows/release.yml` compila el `.dmg` en la nube en cada tag `v*`:
+una **matrix** con runners `macos-14` (Apple Silicon) y `macos-13` (Intel) corre
+`cargo tauri build --bundles app dmg` y publica los dos `.dmg` en el GitHub Release (junto al `.deb`
++ AppImage de Linux). Los runners de macOS son **gratis en repos públicos**; no se necesita una Mac
+física ni `tauri-action` (se invoca `cargo tauri` directo, igual que en Linux, porque el `package.json`
+vive en `web/`). El `.dmg` se genera con **ad-hoc signing** (sin certificado), así que **no requiere
+secretos** — pero queda **sin notarizar** (ver Gatekeeper arriba).
+
+Sobre ese `.dmg` publicado, `install.sh` (raíz del repo) da el instalador de un comando:
+`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/MrArcher23/arrow/main/install.sh)"`.
 
 ## Estado
 
-- ✅ Código adaptado a macOS (titlebar nativa + font-weight por OS), compilando en Linux.
+- ✅ Código adaptado a macOS (titlebar nativa + font-weight por OS).
+- ✅ **`.dmg` publicado por CI** (matrix arm64 + x64 en `release.yml`) + `install.sh` (one-liner).
 - ⏳ **Sin verificar en una Mac todavía:** el bloque `cfg(target_os = "macos")` solo se activa al
-  compilar en macOS. Falta el primer `cargo tauri build --bundles app dmg` real para confirmar
-  el look de la titlebar y el `.dmg`.
+  compilar en macOS. Falta correr un tag real y confirmar en una Mac el look de la titlebar, que el
+  `.dmg` monta y que `install.sh` deja la app en `/Applications`.
+- ⏳ **Firma/notarización** (Apple Developer, ~99 USD/año) y **Homebrew Cask** siguen pendientes
+  (backlog del [ROADMAP.md](ROADMAP.md)).
