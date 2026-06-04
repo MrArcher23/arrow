@@ -197,6 +197,27 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
   "can't tell" (la rama no es ancestro aunque el trabajo esté en `main`). Mejora: consultar el forge
   (`gh pr view --json mergedAt`) o `range-diff` para **subir** la confianza a "likely merged", sin que deje
   de ser estricto para autorizar un borrado. Requiere red / `gh` ⇒ opt-in, time-boxed.
+- **Commit asistido por IA sin abrir el IDE** (detalla la **Fase 4: edición + GitHub — commits/PRs**;
+  feedback de un usuario real probando arrow). La observación: arrow ya elimina el motivo #1 para abrir
+  el IDE —*revisar* lo que tocó Claude—; el motivo #2 que aún arrastra al IDE es **hacer el commit con la
+  IA integrada del editor**. El pedido: integrar un flujo de Git en arrow cuyo mensaje de commit lo
+  redacte *la IA que el usuario ya usa*. Cita: *"a mí me gusta entrar al IDE solo a ver esto que hiciste
+  y hacer el commit con la IA integrada... ¿será que podría integrar ese flujo de Git con la IA que ya
+  uno use?"*.
+  - **Principio de diseño (respeta el ADN de arrow):** NO embeber un LLM ni pedir API keys — arrow es
+    deliberadamente *"sin chat con IA"* y ligero. En vez de eso, **delegar en la IA que el usuario ya
+    tiene**: como su público ya vive en Claude Code, arrow podría pasarle el diff a Claude (p.ej. `claude
+    -p` en modo headless) para redactar el mensaje y/o hacer el commit. Mismo espíritu que el `copy cmd`
+    del inventario de worktrees: **arrow prepara, la herramienta del usuario ejecuta** (arrow no se vuelve
+    pesado ni "otra IA más").
+  - **Honestidad / límites:** el commit es una acción de **ESCRITURA** (salto desde el read-only actual,
+    por eso vive en la Fase 4). Exige: confirmación explícita, mostrar **exactamente qué se va a stagear**,
+    y la salvedad de siempre — arrow ve *"ediciones vía herramientas de Claude"*, NO los cambios por `Bash`;
+    un commit desde arrow no debe pretender capturar lo que no rastrea. Considerar el **worktree** correcto
+    (commitear en el árbol que toca, no en el principal).
+  - **Escalón mínimo (sin IA, ya alineado al `copy cmd`):** un botón que prepare/copie el `git add` +
+    `git commit -m "…"` para que el usuario lo dispare; la capa de IA (mensaje autogenerado por Claude) es
+    la mejora encima. Así se entrega valor incremental sin cruzar de golpe a "arrow commitea por ti".
 
 ## Deuda técnica / notas
 
