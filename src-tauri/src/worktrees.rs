@@ -359,23 +359,55 @@ fn shell_quote(s: &str) -> String {
 
 /// Run `git -C <repo> <args>` capturing stdout+stderr and success. Unlike the
 /// read-only `run_git`, this keeps stderr: a removal that git refuses must show
-/// its reason. Mutating ops are user-initiated, local, and tiny, so the blocking
-/// `.output()` (no timeout) is acceptable here.
+/// its reason. Bounded by the same `GIT_TIMEOUT` (and with stdin nulled) as the
+/// read path, so a wedged git — a stalled network FS, lock contention, or a
+/// stray credential/hook prompt reading stdin — can never freeze the UI stuck on
+/// "Running…". On timeout the child is killed and an honest error is returned.
 fn run_git_capture(repo: &str, args: &[&str]) -> (bool, String) {
-    match Command::new("git").arg("-C").arg(repo).args(args).output() {
-        Ok(o) => {
-            let mut s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            let err = String::from_utf8_lossy(&o.stderr);
-            let err = err.trim();
-            if !err.is_empty() {
-                if !s.is_empty() {
-                    s.push('\n');
+    let mut child = match Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return (false, format!("failed to run git: {e}")),
+    };
+    let deadline = Instant::now() + GIT_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut out = String::new();
+                let mut err = String::new();
+                if let Some(mut o) = child.stdout.take() {
+                    let _ = o.read_to_string(&mut out);
                 }
-                s.push_str(err);
+                if let Some(mut e) = child.stderr.take() {
+                    let _ = e.read_to_string(&mut err);
+                }
+                let mut s = out.trim().to_string();
+                let err = err.trim();
+                if !err.is_empty() {
+                    if !s.is_empty() {
+                        s.push('\n');
+                    }
+                    s.push_str(err);
+                }
+                return (status.success(), s);
             }
-            (o.status.success(), s)
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return (false, "git timed out".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => return (false, format!("failed to run git: {e}")),
         }
-        Err(e) => (false, format!("failed to run git: {e}")),
     }
 }
 

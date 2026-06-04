@@ -128,7 +128,11 @@
   // dirty/locked/active — git would refuse, or you're working in it. Those rows
   // keep "copy cmd" so the user can still run it deliberately. Tauri-only.
   function canClean(w: Worktree): boolean {
-    return inTauri && (w.prunable || (w.isMerged && !w.dirty && !w.locked))
+    if (!inTauri) return false
+    // Never offer Clean on a worktree you're actively editing — even if it's
+    // technically merged+clean (git would allow it, but you're working in it).
+    if (isActive(latestEditUnder(w.path), now)) return false
+    return w.prunable || (w.isMerged && !w.dirty && !w.locked)
   }
 
   // Step 1: preview. A dry-run shows the exact command (and, for prune, git's own
