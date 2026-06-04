@@ -285,6 +285,16 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
   que no existe un `.dmg` publicado todavía: el primer `v*` lo generará. **Pendiente:** correr ese
   primer tag, la firma/notarización (Apple Developer, ~99 USD/año) para quitar la fricción de
   Gatekeeper, y un **Homebrew Cask** (`brew install --cask`) con upgrade/uninstall.
+- **Aviso de actualización (check-for-updates)** — ✅ implementado. arrow consulta el último Release de
+  GitHub y avisa si hay una versión más nueva, **sin descargar ni instalar nada** (honesto: unsigned ⇒
+  un auto-updater silencioso pelearía con Gatekeeper, por eso solo *avisa*). Capa de red **opt-in y
+  secundaria** en `src/update.rs` (fuera del hot path del parser; shell-out a `curl`, sin dep HTTP
+  nueva, time-boxed, degrada con `error` en vez de panic). Expuesto en CLI (`--check-update [--json]`),
+  Tauri (comando `check_update` + `open_url` para abrir el release) y en la **VersionBadge** (punto verde
+  + "Update available → vX.Y.Z" + "Open release"). Tests de orden de versión en `update.rs`.
+  **Pendientes (siguen en backlog):** auto-instalación real vía `tauri-plugin-updater` (requiere keypair
+  de firma del updater + `latest.json` firmado en el job de release; mejor **tras** la notarización) y el
+  Homebrew Cask de arriba para el upgrade nativo en Mac.
 - **macOS sin verificar en hardware**: el código ya está adaptado a Mac (titlebar nativa + font-weight
   por OS; ver [MACOS.md](MACOS.md)) y la matrix ya **construirá** el `.dmg` en CI, pero el bloque
   `cfg(target_os = "macos")` y el `install.sh` aún **no se probaron en una Mac real** → falta correr

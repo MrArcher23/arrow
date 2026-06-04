@@ -63,8 +63,10 @@ installs `arrow.app` into `/Applications`, and clears the Gatekeeper quarantine 
 
 > The installer strips the quarantine attribute of an **unsigned** binary so it opens without
 > friction — only run it if you trust this source. To **update**, re-run the one-liner; to
-> **uninstall**, `rm -rf /Applications/arrow.app`. (There is no auto-update / package manager yet —
-> a Homebrew Cask is on the [roadmap](ROADMAP.md).)
+> **uninstall**, `rm -rf /Applications/arrow.app`. arrow **tells you when a newer release exists**
+> (a dot on the version badge, or `arrow --check-update` from the CLI) but does not auto-install it
+> yet — being unsigned, a silent in-app updater would fight Gatekeeper. A Homebrew Cask and a signed
+> auto-updater are on the [roadmap](ROADMAP.md).
 
 **Manual:** grab the `.dmg` for your chip (`_aarch64` = Apple Silicon, `_x64` = Intel) from the
 [**Releases**](https://github.com/MrArcher23/arrow/releases/latest) page, open it, and drag arrow to
@@ -133,10 +135,13 @@ cargo build --release
 
 # Normalized JSON (the contract the UI consumes)
 ./target/release/arrow --repo my-project --json
+
+# Is there a newer arrow release? (network; read-only, never installs)
+./target/release/arrow --check-update
 ```
 
 Options: `--projects-dir <path>` (defaults to `~/.claude/projects`), `--repo`, `--session`,
-`--list`, `--json`, and `--content --file <path> [--session <id>]` (emits `{before, after}` for a
+`--list`, `--json`, `--check-update`, and `--content --file <path> [--session <id>]` (emits `{before, after}` for a
 file, for the UI's diff view).
 
 ## Web UI (Phase 1)

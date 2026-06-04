@@ -68,3 +68,12 @@ export interface RepoWorktrees {
   defaultBranch: string | null // null = couldn't resolve → merge classification suppressed
   worktrees: Worktree[]
 }
+
+// Result of the release-update check (the version badge's "update available" hint).
+export interface UpdateStatus {
+  current: string // running version, no leading "v"
+  latest: string | null // latest published tag, no "v"; null if the check failed
+  updateAvailable: boolean // a strictly-newer latest than current
+  url: string | null // release page to open/share
+  error: string | null // why the check failed (network, no release); null on success
+}

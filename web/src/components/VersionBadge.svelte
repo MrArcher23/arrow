@@ -1,9 +1,25 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { appVersion, RELEASES_URL } from '../lib/version'
+  import { checkUpdate, openUrl } from '../lib/api'
+  import type { UpdateStatus } from '../lib/types'
 
   let open = $state(false)
   let root = $state<HTMLDivElement>()
   let copied = $state(false)
+  // Release-update check (Tauri-only): runs once on mount, off the render path.
+  // `null` until it resolves or in the browser dev build (no app to update).
+  let upd = $state<UpdateStatus | null>(null)
+  let hasUpdate = $derived(upd?.updateAvailable === true)
+  let releaseUrl = $derived(upd?.url ?? RELEASES_URL)
+
+  onMount(async () => {
+    try {
+      upd = await checkUpdate()
+    } catch {
+      /* offline / rate-limited: stay silent, the badge just shows the version */
+    }
+  })
 
   function onWindowClick(e: MouseEvent) {
     if (open && root && !root.contains(e.target as Node)) open = false
@@ -13,11 +29,18 @@
   }
   async function copyLink() {
     try {
-      await navigator.clipboard.writeText(RELEASES_URL)
+      await navigator.clipboard.writeText(releaseUrl)
       copied = true
       setTimeout(() => (copied = false), 1200)
     } catch {
       /* clipboard unavailable: ignore */
+    }
+  }
+  async function openRelease() {
+    try {
+      await openUrl(releaseUrl)
+    } catch {
+      /* opener unavailable: the copy button is the fallback */
     }
   }
 </script>
@@ -25,16 +48,30 @@
 <svelte:window onclick={onWindowClick} onkeydown={onKey} />
 
 <div class="ver" bind:this={root}>
-  <button class="badge" onclick={() => (open = !open)} aria-haspopup="dialog" aria-expanded={open} title="About arrow">
-    v{appVersion}
+  <button
+    class="badge"
+    class:has-update={hasUpdate}
+    onclick={() => (open = !open)}
+    aria-haspopup="dialog"
+    aria-expanded={open}
+    title={hasUpdate ? `Update available: v${upd?.latest}` : 'About arrow'}
+  >
+    v{appVersion}{#if hasUpdate}<span class="udot" aria-hidden="true"></span>{/if}
   </button>
 
   {#if open}
     <div class="popover" role="dialog" aria-label="About arrow">
       <div class="title">arrow <span class="v">v{appVersion}</span></div>
       <div class="sub">Audit viewer for Claude Code</div>
+      {#if hasUpdate}
+        <div class="update">
+          <span class="up-text">Update available → <strong>v{upd?.latest}</strong></span>
+          <button class="open" onclick={openRelease}>Open release</button>
+        </div>
+        <div class="hint">macOS is unsigned — re-run the installer to update.</div>
+      {/if}
       <div class="link">
-        <span class="url" title={RELEASES_URL}>{RELEASES_URL}</span>
+        <span class="url" title={releaseUrl}>{releaseUrl}</span>
         <button class="copy" onclick={copyLink}>{copied ? 'copied!' : 'copy'}</button>
       </div>
     </div>
@@ -58,6 +95,54 @@
   .badge:hover {
     background: var(--hover);
     color: var(--fg);
+  }
+  .badge.has-update {
+    color: var(--fg);
+    border-color: var(--green);
+  }
+  .udot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--green);
+    margin-left: 5px;
+    vertical-align: middle;
+  }
+  .update {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 6px 8px;
+    background: var(--chip);
+    border: 1px solid var(--green);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .up-text {
+    color: var(--fg);
+    flex: 1;
+    min-width: 0;
+  }
+  .open {
+    font: inherit;
+    font-size: 11px;
+    color: #000;
+    background: var(--green);
+    border: 1px solid var(--green);
+    border-radius: 6px;
+    padding: 2px 9px;
+    cursor: pointer;
+    flex: none;
+  }
+  .open:hover {
+    opacity: 0.9;
+  }
+  .hint {
+    color: var(--dim);
+    font-size: 11px;
+    margin-top: 6px;
   }
   .popover {
     position: absolute;

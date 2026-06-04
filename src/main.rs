@@ -46,6 +46,10 @@ struct Cli {
     /// Ruta exacta del archivo (para --content)
     #[arg(long)]
     file: Option<String>,
+
+    /// Check GitHub for a newer arrow release (network; read-only, never installs)
+    #[arg(long)]
+    check_update: bool,
 }
 
 const RESET: &str = "\x1b[0m";
@@ -63,6 +67,35 @@ fn main() -> Result<()> {
         .projects_dir
         .clone()
         .unwrap_or_else(|| format!("{home}/.claude/projects"));
+
+    if cli.check_update {
+        let st = arrow::check_update(env!("CARGO_PKG_VERSION"));
+        if cli.json {
+            println!("{}", serde_json::to_string(&st)?);
+        } else if let Some(err) = &st.error {
+            println!("{YELLOW}Couldn't check for updates:{RESET} {err}");
+            println!("{DIM}current: v{}{RESET}", st.current);
+        } else if st.update_available {
+            let latest = st.latest.as_deref().unwrap_or("?");
+            println!(
+                "{GREEN}{BOLD}Update available:{RESET} v{} {DIM}→{RESET} {GREEN}v{latest}{RESET}",
+                st.current
+            );
+            if let Some(url) = &st.url {
+                println!("{DIM}{url}{RESET}");
+            }
+            println!(
+                "{DIM}macOS: re-run the installer · curl -fsSL \
+                 https://raw.githubusercontent.com/MrArcher23/arrow/main/install.sh | bash{RESET}"
+            );
+        } else {
+            println!(
+                "{GREEN}arrow is up to date{RESET} {DIM}(v{}){RESET}",
+                st.current
+            );
+        }
+        return Ok(());
+    }
 
     if cli.content {
         let target = cli

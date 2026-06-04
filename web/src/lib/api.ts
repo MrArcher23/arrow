@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { Report, FileContent, Editor, RepoWorktrees } from './types'
+import type { Report, FileContent, Editor, RepoWorktrees, UpdateStatus } from './types'
 
 // Única capa que conoce el transporte. Dos modos, MISMO contrato:
 //   - App de escritorio (Tauri): llama al backend Rust vía invoke() — sin HTTP.
@@ -74,4 +74,21 @@ export async function loadWorktrees(repoRoots: string[]): Promise<RepoWorktrees[
 export async function calcWorktreeSizes(paths: string[]): Promise<Record<string, number>> {
   if (!inTauri) return {}
   return invoke<Record<string, number>>('worktree_sizes', { paths })
+}
+
+// Check GitHub for a newer release (the version badge's "update available" hint).
+// Tauri-only — in the browser dev build there's no app to update, so it returns a
+// neutral "no check" result instead of hitting the network.
+export async function checkUpdate(): Promise<UpdateStatus | null> {
+  if (!inTauri) return null
+  return invoke<UpdateStatus>('check_update')
+}
+
+// Open an https URL in the default browser (the "Open release" action). Tauri-only.
+export async function openUrl(url: string): Promise<void> {
+  if (!inTauri) {
+    window.open(url, '_blank', 'noopener')
+    return
+  }
+  await invoke('open_url', { url })
 }
