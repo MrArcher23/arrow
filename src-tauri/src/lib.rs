@@ -58,8 +58,8 @@ fn open_in_editor(editor_id: String, file: String, line: i64, col: i64) -> Resul
 
 /// Worktree inventory for the given repo roots (the ones the report already
 /// knows). Read-only: lists + classifies git worktrees (merged/active/stale is
-/// finished off in the frontend); arrow never removes one. Tauri-only — the
-/// browser dev-server has no equivalent.
+/// finished off in the frontend). Removal is the separate, opt-in `remove_worktree`
+/// command. Tauri-only — the browser dev-server has no equivalent.
 #[tauri::command]
 fn worktrees(repo_roots: Vec<String>) -> Vec<worktrees::RepoWorktreesOut> {
     worktrees::list_worktrees(&repo_roots)
@@ -103,6 +103,37 @@ fn open_url(url: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("couldn't open the browser: {e}"))
+}
+
+/// Remove a linked worktree (the "Clean" action). The ONLY mutating command in
+/// arrow, reached only by an explicit, confirmed user action. Runs `git worktree
+/// remove` WITHOUT `--force`, so git refuses a locked/dirty worktree. `dry_run`
+/// previews the command without touching disk. On a real success it emits
+/// `report-changed` so the UI re-scans. Tauri-only — not exposed over HTTP.
+#[tauri::command]
+fn remove_worktree(
+    app: AppHandle,
+    repo: String,
+    path: String,
+    dry_run: bool,
+) -> worktrees::CleanupResult {
+    let res = worktrees::remove_worktree(&repo, &path, dry_run);
+    if res.ok && !res.dry_run {
+        let _ = app.emit("report-changed", ());
+    }
+    res
+}
+
+/// Prune phantom worktree entries of a repo (`git worktree prune`). Mutating but
+/// safe — it only drops entries whose working dir is already gone. `dry_run` uses
+/// git's native `-n`. Emits `report-changed` on a real run. Tauri-only.
+#[tauri::command]
+fn prune_worktrees(app: AppHandle, repo: String, dry_run: bool) -> worktrees::CleanupResult {
+    let res = worktrees::prune_worktrees(&repo, dry_run);
+    if res.ok && !res.dry_run {
+        let _ = app.emit("report-changed", ());
+    }
+    res
 }
 
 /// Watcher nativo: vigila `~/.claude/projects` y, con debounce, emite
@@ -192,7 +223,9 @@ pub fn run() {
             worktrees,
             worktree_sizes,
             check_update,
-            open_url
+            open_url,
+            remove_worktree,
+            prune_worktrees
         ])
         .setup(|app| {
             spawn_watcher(app.handle().clone());

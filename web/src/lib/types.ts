@@ -77,3 +77,11 @@ export interface UpdateStatus {
   url: string | null // release page to open/share
   error: string | null // why the check failed (network, no release); null on success
 }
+
+// Outcome of a "Clean" (remove/prune) action or its dry-run preview. Tauri-only.
+export interface CleanupResult {
+  ok: boolean // git exited 0 (a dry-run is always true — nothing was attempted)
+  dryRun: boolean // preview only; disk untouched
+  command: string // the exact, shell-quoted command (for display)
+  output: string // what git said (stdout + stderr), surfaced verbatim
+}

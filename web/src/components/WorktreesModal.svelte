@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { loadWorktrees, calcWorktreeSizes } from '../lib/api'
+  import { loadWorktrees, calcWorktreeSizes, removeWorktree, pruneWorktrees, inTauri } from '../lib/api'
   import { isActive, relative } from '../lib/time'
   import type { Report, RepoWorktrees, Worktree } from '../lib/types'
 
@@ -20,6 +20,21 @@
   let sizes = $state<Record<string, number>>({})
   let sizing = $state(false)
   let copied = $state<string | null>(null) // path of the row whose cmd was just copied
+
+  // "Clean" flow (Tauri-only): the single mutating action in arrow, gated behind
+  // a dry-run → confirmation → run. `confirming` holds the previewed command for
+  // the one row awaiting a yes; `cleaning` is the row currently executing;
+  // `cleanMsg` is the last per-row outcome (git's verbatim refusal on failure).
+  let confirming = $state<{
+    key: string
+    cmd: string
+    note: string
+    prune: boolean
+    repo: string
+    path: string
+  } | null>(null)
+  let cleaning = $state<string | null>(null)
+  let cleanMsg = $state<{ key: string; ok: boolean; text: string } | null>(null)
 
   // Flatten the report's files once: classifying active/stale only needs the most
   // recent edit under each worktree path, not the repo→session→file tree.
@@ -105,6 +120,57 @@
       }, 1200)
     } catch {
       /* clipboard unavailable: ignore (read-only feature, no harm) */
+    }
+  }
+
+  // Offer "Clean" ONLY for a row git would actually act on: a proven-merged,
+  // clean, unlocked worktree (safe to remove) or a phantom (prunable). Never for
+  // dirty/locked/active — git would refuse, or you're working in it. Those rows
+  // keep "copy cmd" so the user can still run it deliberately. Tauri-only.
+  function canClean(w: Worktree): boolean {
+    if (!inTauri) return false
+    // Never offer Clean on a worktree you're actively editing — even if it's
+    // technically merged+clean (git would allow it, but you're working in it).
+    if (isActive(latestEditUnder(w.path), now)) return false
+    return w.prunable || (w.isMerged && !w.dirty && !w.locked)
+  }
+
+  // Step 1: preview. A dry-run shows the exact command (and, for prune, git's own
+  // `-n` report) before anything touches disk.
+  async function startClean(g: RepoWorktrees, w: Worktree) {
+    const prune = w.prunable
+    try {
+      const res = prune
+        ? await pruneWorktrees(g.repoRoot, true)
+        : await removeWorktree(g.repoRoot, w.path, true)
+      confirming = { key: w.path, cmd: res.command, note: res.output, prune, repo: g.repoRoot, path: w.path }
+      cleanMsg = null
+    } catch (e) {
+      cleanMsg = { key: w.path, ok: false, text: String(e) }
+    }
+  }
+
+  function cancelClean() {
+    confirming = null
+  }
+
+  // Step 2: run for real. On success, re-scan so the removed row disappears; on
+  // failure (e.g. git refuses a dirty worktree), surface git's message verbatim.
+  async function confirmClean() {
+    if (!confirming) return
+    const c = confirming
+    cleaning = c.key
+    try {
+      const res = c.prune
+        ? await pruneWorktrees(c.repo, false)
+        : await removeWorktree(c.repo, c.path, false)
+      confirming = null
+      cleanMsg = { key: c.key, ok: res.ok, text: res.ok ? (c.prune ? 'pruned' : 'removed') : res.output }
+      if (res.ok) await load()
+    } catch (e) {
+      cleanMsg = { key: c.key, ok: false, text: String(e) }
+    } finally {
+      cleaning = null
     }
   }
 
@@ -198,15 +264,44 @@
                 <button class="copy" onclick={() => copyCmd(g, w)} title={cmdFor(g, w)}>
                   {copied === w.path ? 'copied!' : 'copy cmd'}
                 </button>
+                {#if canClean(w)}
+                  <button
+                    class="clean"
+                    onclick={() => startClean(g, w)}
+                    disabled={cleaning === w.path}
+                    title={w.prunable ? 'Prune this phantom entry' : 'Remove this worktree (no --force)'}
+                  >
+                    {w.prunable ? 'Prune' : 'Clean'}
+                  </button>
+                {/if}
               </div>
+              {#if confirming?.key === w.path}
+                <div class="confirm">
+                  <code class="confirm-cmd">{confirming.cmd}</code>
+                  <span class="confirm-note">{confirming.note}</span>
+                  <span class="confirm-actions">
+                    <button class="go" onclick={confirmClean} disabled={cleaning === w.path}>
+                      {cleaning === w.path ? 'Running…' : confirming.prune ? 'Prune' : 'Remove'}
+                    </button>
+                    <button class="cancel" onclick={cancelClean} disabled={cleaning === w.path}>
+                      Cancel
+                    </button>
+                  </span>
+                </div>
+              {:else if cleanMsg?.key === w.path}
+                <div class="msg" class:err={!cleanMsg.ok}>
+                  {cleanMsg.ok ? '✓ ' : ''}{cleanMsg.text}
+                </div>
+              {/if}
             {/each}
           </section>
         {/each}
         <p class="foot">
-          Read-only: arrow lists worktrees and copies the <code>git worktree remove</code> command for
-          you to run — it never deletes anything. “merged” is shown only when the branch is provably an
-          ancestor of the default branch; squash/rebase merges read as “can't confirm”. Sizes are
-          approximate.
+          “Clean” runs <code>git worktree remove</code> <strong>without <code>--force</code></strong>
+          (git refuses a locked or dirty worktree), after a dry-run and a confirmation; everything else
+          here is read-only, and you can always “copy cmd” to run it yourself. “merged” is shown only
+          when the branch is provably an ancestor of the default branch; squash/rebase merges read as
+          “can't confirm”. Sizes are approximate.
         </p>
       {/if}
     </div>
@@ -413,6 +508,91 @@
     background: var(--active);
     color: var(--fg);
     border-color: var(--accent);
+  }
+  .clean {
+    font: inherit;
+    font-size: 11px;
+    color: var(--fg);
+    background: var(--chip);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex: none;
+  }
+  .clean:hover:not(:disabled) {
+    background: var(--warn);
+    color: #000;
+    border-color: var(--warn);
+  }
+  .clean:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .confirm {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 0 6px 6px 22px;
+    padding: 7px 9px;
+    background: var(--chip);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 11px;
+  }
+  .confirm-cmd {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg);
+    word-break: break-all;
+  }
+  .confirm-note {
+    color: var(--dim);
+    flex: 1;
+    min-width: 120px;
+  }
+  .confirm-actions {
+    display: inline-flex;
+    gap: 6px;
+    margin-left: auto;
+  }
+  .go,
+  .cancel {
+    font: inherit;
+    font-size: 11px;
+    border-radius: 6px;
+    padding: 2px 10px;
+    cursor: pointer;
+  }
+  .go {
+    color: #000;
+    background: var(--warn);
+    border: 1px solid var(--warn);
+  }
+  .go:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .cancel {
+    color: var(--dim);
+    background: transparent;
+    border: 1px solid var(--border);
+  }
+  .cancel:hover {
+    color: var(--fg);
+    background: var(--hover);
+  }
+  .msg {
+    margin: 0 6px 6px 22px;
+    padding: 5px 9px;
+    font-size: 11px;
+    color: var(--green);
+    white-space: pre-wrap;
+  }
+  .msg.err {
+    color: var(--red);
   }
   .foot {
     margin: 10px 8px 2px;
