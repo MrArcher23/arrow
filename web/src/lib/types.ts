@@ -49,3 +49,22 @@ export interface Editor {
   id: string
   name: string
 }
+
+// A git worktree of a repo, for the read-only "Worktrees" inventory. Tauri-only.
+export interface Worktree {
+  path: string
+  branch: string | null // null = detached HEAD
+  head: string // abbreviated HEAD commit
+  isMain: boolean // the repo's primary worktree (never removable)
+  isMerged: boolean // proven merged: branch tip is an ancestor of the default branch
+  ahead: number | null // commits on the branch not in the default branch; null if unknown
+  dirty: boolean // uncommitted/untracked changes in the working tree
+  locked: boolean
+  prunable: boolean
+}
+
+export interface RepoWorktrees {
+  repoRoot: string
+  defaultBranch: string | null // null = couldn't resolve → merge classification suppressed
+  worktrees: Worktree[]
+}

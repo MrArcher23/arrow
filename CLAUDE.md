@@ -52,7 +52,20 @@ empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web 
   válida ⇒ `beforeAvailable:false` (el frontend muestra el archivo actual con banner honesto, NUNCA "new
   file"). `--content` sin `--session` elige la sesión más reciente que tocó el archivo (no mezcla sesiones).
 - Metadatos de sesión: `ai-title`→título, `last-prompt`, `timestamp`→actividad.
-- Repo = **raíz git del `cwd`** de la sesión (`git_root`): fusiona subdirs como `web/` con su repo.
+- Repo = **raíz git del `cwd`** de la sesión (`git_root`): fusiona subdirs como `web/` con su repo. Un
+  **worktree enlazado** tiene un `.git` que es un **FILE** (`gitdir: …/.git/worktrees/<name>`); `git_root`
+  lo detecta y **re-ancla al repo principal** (lee el puntero, sin invocar git), así un cwd dentro de
+  `<repo>/.claude/worktrees/<name>/` NO aparece como repo fantasma. Un submódulo (`.git/modules/…`) NO
+  se re-ancla (es su propio repo).
+- **"Worktrees inventory"** (botón `Worktrees` en la topbar, **Tauri-only**, read-only): lista/clasifica
+  los worktrees de git por repo (active / stale ≥10 min / "merged → safe to remove") con tamaños bajo
+  demanda y `copy cmd`. **NO borra nada** (el botón `Clean` se difirió — ver ROADMAP). Todo el shelling a
+  git vive en `src-tauri/src/worktrees.rs` (Tauri-only, clona `editor.rs`): el parser `src/lib.rs` **sigue
+  sin invocar git**. argv directo sin shell, comandos read-only con timeout. Honestidad: rama por defecto
+  **resuelta dinámicamente** (nunca hardcodeada); "merged" en verde **solo** si el tip es ancestro
+  (squash/rebase ⇒ "can't tell", nunca verde falso); active/stale = edición reciente de archivos, NO
+  proceso vivo; tamaño aproximado. active/stale se deriva en el **frontend** desde `lastTouched` (ventana
+  de 10 min, `STALE_AFTER` en `time.ts`); el backend solo reporta hechos de git.
 - Solo cuentan transcripts de **primer nivel**; los `.jsonl` anidados (subagentes) se ignoran.
 
 ## Reglas del proyecto (IMPORTANT)

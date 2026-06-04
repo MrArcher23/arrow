@@ -196,6 +196,14 @@ cargo tauri build
   arrow never embeds an editor or a language server (the mirror image of Claude Code's `/ide`).
   Honest: it opens the **current on-disk file** (and is disabled when that file is gone), never the
   reconstructed snapshot.
+- **Worktrees inventory**: a `Worktrees` button in the topbar opens a read-only inventory of the git
+  worktrees Claude Code creates per session (under `<repo>/.claude/worktrees/`), grouped by repo and
+  flagged **active / stale (≥10 min no edits) / merged → safe to remove**, with on-demand disk sizes.
+  It **never deletes anything** — each row copies the exact `git worktree remove` command for *you* to
+  run. Honest by construction: "merged" is shown only when the branch is provably an ancestor of the
+  repo's (dynamically resolved) default branch — a squash/rebase merge reads as *can't confirm*, never
+  a false green; "active" means recent edits on disk, not a running process; sizes are approximate. All
+  git shelling stays in the Tauri backend, so the parser library remains git-free.
 - **Window and zoom**: a custom titlebar (`decorations:false`) with minimize/maximize/close buttons,
   drag, and double-click to maximize — guaranteeing *cross-distro* controls (on GNOME/Pop!_OS the WM
   doesn't paint them reliably). VSCode-style UI zoom with `Ctrl +/−/0`: native to the webview

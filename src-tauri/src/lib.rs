@@ -20,6 +20,7 @@ use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 
 mod editor;
+mod worktrees;
 
 /// `~/.claude/projects` (fuente de verdad nativa de Claude Code).
 fn projects_dir() -> String {
@@ -53,6 +54,23 @@ fn editors() -> Vec<editor::EditorOut> {
 #[tauri::command]
 fn open_in_editor(editor_id: String, file: String, line: i64, col: i64) -> Result<(), String> {
     editor::open_in_editor(&editor_id, &file, line, col)
+}
+
+/// Worktree inventory for the given repo roots (the ones the report already
+/// knows). Read-only: lists + classifies git worktrees (merged/active/stale is
+/// finished off in the frontend); arrow never removes one. Tauri-only — the
+/// browser dev-server has no equivalent.
+#[tauri::command]
+fn worktrees(repo_roots: Vec<String>) -> Vec<worktrees::RepoWorktreesOut> {
+    worktrees::list_worktrees(&repo_roots)
+}
+
+/// On-demand disk size (approx, apparent bytes) per worktree path, for the
+/// "Calculate sizes" button. Separate from `worktrees()` so opening the modal
+/// stays instant — walking a full checkout is the one expensive part.
+#[tauri::command]
+fn worktree_sizes(paths: Vec<String>) -> std::collections::HashMap<String, u64> {
+    worktrees::worktree_sizes(&paths)
 }
 
 /// Watcher nativo: vigila `~/.claude/projects` y, con debounce, emite
@@ -138,7 +156,9 @@ pub fn run() {
             report,
             content,
             editors,
-            open_in_editor
+            open_in_editor,
+            worktrees,
+            worktree_sizes
         ])
         .setup(|app| {
             spawn_watcher(app.handle().clone());

@@ -5,8 +5,10 @@ Archivo de seguimiento entre sesiones. El **roadmap canónico de fases** vive en
 backlog de ideas que aún no están comprometidas a ninguna fase. Las **convenciones** del proyecto
 están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 
-> Última actualización: 2026-06-03 (distribución macOS: matrix de CI que publica el `.dmg` arm64+x64
-> en cada release + `install.sh` one-liner `curl … | bash`. Antes: Fase 2 + pulido + mejoras visuales:
+> Última actualización: 2026-06-04 (**Worktrees inventory** read-only: lista/clasifica los worktrees
+> de git que Claude Code crea por sesión —activos / stale ≥10 min / "merged → safe to remove"— con
+> tamaños bajo demanda y `copy cmd`, sin borrar nada en la app; + badge de versión en la topbar. Antes:
+> distribución macOS (matrix de CI publica el `.dmg` arm64+x64 + `install.sh` one-liner); Fase 2 + pulido:
 > zoom, titlebar custom, foco por sesión activa, orden de archivos por recencia, tick de reloj y "Open in editor").
 
 ## Estado actual
@@ -101,6 +103,70 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
     - **macOS / Windows**: las plantillas por familia ya son cross-plataforma; solo cambia la **resolución del
       binario** (mac: `open -a`/bundle id; Win: `.cmd`). Pendiente para cuando esas plataformas se empaqueten.
 
+- **"Worktrees inventory"** (nuevo, read-only, Tauri-only — botón `Worktrees` en la topbar → modal): lista
+  los **git worktrees** que Claude Code va creando por sesión, agrupados por repo, y los clasifica en
+  **active / stale / merged ("safe to remove")**, con tamaño en disco **bajo demanda** y un `copy cmd` por
+  fila. **NO borra nada desde la app** (el botón `Clean` se difiere — ver backlog); la imagen-espejo del
+  problema que "Open in editor" resolvió para la edición, pero para la **higiene de disco**.
+
+  - **Por qué se agrega (el dolor real):** la app de escritorio de Claude Code crea un worktree por sesión
+    en `<repo>/.claude/worktrees/<nombre>/` (nombre random `adjetivo-verbo-sustantivo`, ej. `wise-plotting-graham`).
+    Son **git worktrees enlazados reales**: comparten el object store (`.git` es un *archivo puntero*), pero
+    **cada uno materializa toda la copia de trabajo** (su `node_modules`/`target`/`dist`). Medición de uno de
+    ejemplo: **9.8 GB de working tree vs 2.3 MB de objetos git**. Y **se acumulan**: si la sesión dejó cambios,
+    Claude no los borra al salir. Quien *steerás* mucho a Claude Code (justo el público de arrow) termina con
+    decenas de worktrees colgados comiendo disco y un `git worktree list` ilegible. Disparador adicional:
+    **ya se estaban colando en arrow** — un cwd dentro de un worktree hacía que `git_root` lo tratara como
+    "repo" propio (ver fix abajo), inflando el contador de repos y mezclando worktrees con repos reales.
+
+  - **Diseño (clona el patrón de `editor.rs`):** todo el shelling a git vive en un módulo nuevo Tauri-only
+    `src-tauri/src/worktrees.rs` (el parser `src/lib.rs` **sigue sin invocar git nunca** — premisa del
+    producto: "without depending on git or hooks"). Dos comandos: `worktrees(repo_roots)` corre
+    `git -C <root> worktree list --porcelain` por repo (argv directo, **sin shell**, como `open_in_editor`) y
+    `worktree_sizes(paths)` suma bytes con `walkdir` **solo cuando se pulsa "Calculate sizes"**. Frontend:
+    `loadWorktrees`/`calcWorktreeSizes` en `api.ts` (Tauri-only, `[]` en el navegador como `detectEditors`) +
+    `WorktreesModal.svelte`. **Sin nuevos permisos ACL** (un `#[tauri::command]` con `std::process::Command`
+    se autoriza por estar en `generate_handler!`, igual que `open_in_editor`).
+
+  - **Rendimiento — impacto negligible (medido):** el **hot path no se toca** (`report()`/`--json`/CLI/watcher
+    quedan exactamente igual; el feature NO entra en `build_report`). Abrir el modal = un `git worktree list`
+    por repo (~1 ms c/u; ~33 ms para 39 repos en serie, es plumbing que solo lee metadata de
+    `$GIT_DIR/worktrees/`, no escanea el working tree). La **única** operación cara es el tamaño en disco
+    (walkdir sobre `node_modules` en frío puede tardar segundos), por eso es **bajo demanda**, off-thread y
+    cancelable. El watcher (`~/.claude/projects`) **no** se extiende a los working trees de los repos
+    (explotaría `inotify`); el modal es pull-only con refresco manual.
+
+  - **Honestidad (el filo del feature):**
+    - **Rama por defecto resuelta dinámicamente** (`symbolic-ref refs/remotes/origin/HEAD` → fallbacks
+      locales → `main`/`master`), **nunca hardcodeada** — este mismo repo es `main`, así que un "master"
+      fijo mal-etiquetaría todo. Si no se resuelve ⇒ se **deshabilita** la clasificación de merged.
+    - **"merged → safe to remove" (verde) solo si se prueba:** `git merge-base --is-ancestor <tip> <default>`
+      = 0. El **squash/rebase merge** (default de muchos equipos) deja la rama sin ser ancestro aunque el
+      trabajo ya esté en `main` ⇒ se muestra **"can't tell"**, nunca un "no fusionado" tajante ni un verde
+      falso. (Reproducido en este repo: `fix/live-refresh-open-diff` no es ancestro pero `git cherry` lo da
+      por "landed" y el contenido aún difiere — por eso `cherry` NO es luz verde de borrado.)
+    - **active / stale** = actividad de **edición de archivos** reciente bajo el path del worktree
+      (de `lastTouched` del report; ventana de 10 min, la misma `BURST_WINDOW` de `time.ts`), **no** un
+      proceso vivo — mismo caveat que el punto verde / "active session". La etiqueta dice "recent edits".
+    - **detached / locked / prunable / dirty** se muestran honestos: detached no se clasifica como merged;
+      locked no se ofrece como "safe to remove" (`worktree remove` lo rechaza); prunable sugiere
+      `git worktree prune`, no `remove`; el **worktree principal** se marca y nunca se ofrece para borrar.
+    - **Tamaño = aproximado** (bytes aparentes vía `walkdir`, sin seguir symlinks); se etiqueta como tal.
+    - **Read-only:** `copy cmd` copia el `git worktree remove <path>` para que **el usuario** lo corra; arrow
+      no muta el estado de git. (El botón `Clean` in-app se difiere a propósito — ver backlog.)
+
+  - **Fix colateral en el parser (`git_root`, `src/lib.rs`):** un worktree enlazado tiene un `.git` que es un
+    **FILE** (`gitdir: …/.git/worktrees/<name>`), y `git_root` usaba `dir.join(".git").exists()` (true también
+    para un file) ⇒ paraba en el worktree y lo listaba como repo fantasma. Ahora, si `.git` es un file, **lee
+    el puntero y re-ancla a la raíz del repo principal** (sigue siendo *solo filesystem*, no invoca git ⇒ no
+    rompe la regla del lib). Test nuevo paralelo a `agrupa_por_raiz_git`; los 20 tests previos no se afectan
+    (todos crean `.git` como **directorio**, que toma el camino sin cambios).
+
+- **Badge de versión en la topbar** (`v0.1.x`, clicable → popover "About" con link a Releases): la versión se
+  inyecta en build con un `define` de Vite leído de `src-tauri/tauri.conf.json` (la fuente que sella el bundle),
+  expuesta en `web/src/lib/version.ts` (misma convención aislada que `zoom.ts`/`window.ts`). Funciona igual en
+  la app y en `npm run dev` (es síncrono, sin ACL `app:default` ni `getVersion()` async). Texto de UI en inglés.
+
 ## Backlog de ideas (sin comprometer fase)
 
 Mejoras propuestas que NO están en el roadmap de fases. A discutir/priorizar antes de implementar;
@@ -117,6 +183,20 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
 - **Atajos de teclado** — navegar el árbol y abrir diffs sin ratón (j/k, enter, etc.). (Los atajos de
   **zoom** `Ctrl +/−/0` ya están; faltan los de navegación. Reusarían el mismo `keydown` global de
   `App.svelte` (`onKey`).)
+- **Botón `Clean` in-app para worktrees** (diferido del "Worktrees inventory"; sería la **única acción
+  destructiva** de arrow, así que cruza la línea read-only y encaja en la Fase 4 de edición). Hoy el modal
+  solo lista + `copy cmd`. Un `Clean` exigiría **blindaje fuerte**, según la auditoría de seguridad: correr
+  `git worktree remove` (nunca `rm -rf`, luego `worktree prune`); **rechazar** worktrees con
+  `git status --porcelain` no vacío (sucios/untracked — p.ej. el `.deb` sin trackear de este repo se
+  perdería con `--force`); **nunca** `--force` ni `branch -d/-D` automático (una rama sin upstream es la
+  única copia); tratar detached/locked como hard-stop; nunca el worktree principal; y mostrar el comando
+  exacto antes de ejecutarlo. **Riesgo central** (reproducido): un detector de "merged" laxo (que confíe en
+  `git cherry` en vez de ancestro estricto o el forge) + un borrado de rama destruiría trabajo no fusionado.
+  Por eso el MVP se queda en read-only.
+- **Detección de "merged" más fina para squash/rebase** — hoy un squash-merge se reporta honesto como
+  "can't tell" (la rama no es ancestro aunque el trabajo esté en `main`). Mejora: consultar el forge
+  (`gh pr view --json mergedAt`) o `range-diff` para **subir** la confianza a "likely merged", sin que deje
+  de ser estricto para autorizar un borrado. Requiere red / `gh` ⇒ opt-in, time-boxed.
 
 ## Deuda técnica / notas
 

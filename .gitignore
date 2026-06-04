@@ -5,6 +5,12 @@ web/dist
 src-tauri/target
 src-tauri/gen
 
+# Claude Code's per-session git worktrees: transient full checkouts living under
+# the repo, not source. Git still tracks them via .git/worktrees/ metadata (so
+# `git worktree list` and arrow's inventory keep working); this only stops the
+# parent repo from treating their files as untracked content to commit.
+.claude/worktrees/
+
 # OS / editor junk
 .DS_Store
 Thumbs.db

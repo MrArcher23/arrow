@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { Report, FileContent, Editor } from './types'
+import type { Report, FileContent, Editor, RepoWorktrees } from './types'
 
 // Única capa que conoce el transporte. Dos modos, MISMO contrato:
 //   - App de escritorio (Tauri): llama al backend Rust vía invoke() — sin HTTP.
@@ -61,4 +61,17 @@ export async function openInEditor(
 ): Promise<void> {
   if (!inTauri) throw new Error('Open in editor is only available in the desktop app')
   await invoke('open_in_editor', { editorId, file, line, col })
+}
+
+// "Worktrees" inventory — Tauri-only (inspecting/cleaning git worktrees only
+// makes sense from the native app). Returns [] in the browser dev mode.
+export async function loadWorktrees(repoRoots: string[]): Promise<RepoWorktrees[]> {
+  if (!inTauri) return []
+  return invoke<RepoWorktrees[]>('worktrees', { repoRoots })
+}
+
+// On-demand disk sizes (approx apparent bytes) per worktree path. Tauri-only.
+export async function calcWorktreeSizes(paths: string[]): Promise<Record<string, number>> {
+  if (!inTauri) return {}
+  return invoke<Record<string, number>>('worktree_sizes', { paths })
 }

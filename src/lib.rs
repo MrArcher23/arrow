@@ -839,8 +839,21 @@ fn git_root(cwd: &str, cache: &mut HashMap<String, String>) -> String {
     let mut dir = PathBuf::from(cwd);
     let mut root = cwd.to_string();
     loop {
-        if dir.join(".git").exists() {
+        let dot_git = dir.join(".git");
+        if dot_git.is_dir() {
+            // Normal repo: the directory holding `.git/` is the root.
             root = dir.to_string_lossy().into_owned();
+            break;
+        }
+        if dot_git.is_file() {
+            // Linked git worktree: `.git` is a FILE, not a dir — a pointer
+            // `gitdir: <main>/.git/worktrees/<name>`. Re-anchor to the MAIN repo so a
+            // session whose cwd lives inside `<repo>/.claude/worktrees/<name>/` folds
+            // under `<repo>`, instead of surfacing the worktree as a phantom top-level
+            // repo (which double-counted it and mixed it with real repos). Falls back
+            // to the worktree dir if the pointer isn't a recognizable worktree shape.
+            // Filesystem-only (reads one small dotfile) — the lib still never spawns git.
+            root = worktree_main_root(&dot_git).unwrap_or_else(|| dir.to_string_lossy().into_owned());
             break;
         }
         if !dir.pop() {
@@ -849,6 +862,23 @@ fn git_root(cwd: &str, cache: &mut HashMap<String, String>) -> String {
     }
     cache.insert(cwd.to_string(), root.clone());
     root
+}
+
+/// Given a linked worktree's `.git` FILE (`gitdir: <main>/.git/worktrees/<name>`),
+/// return the MAIN repo root (`<main>`). Returns `None` for a submodule pointer
+/// (`gitdir: <main>/.git/modules/<name>`) or any shape we don't recognize, so the
+/// caller keeps the worktree dir rather than guessing. Pure filesystem read.
+fn worktree_main_root(dot_git_file: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(dot_git_file).ok()?;
+    let gitdir = text.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
+    // `<main>/.git/worktrees/<name>` -> `<main>`. A submodule's `.git/modules/…`
+    // pointer has no `/.git/worktrees/` segment, so `split` yields the whole string
+    // and we bail (a submodule is legitimately its own repo root).
+    let main = gitdir.split("/.git/worktrees/").next()?;
+    if main.is_empty() || main == gitdir {
+        return None;
+    }
+    Some(main.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,6 +1031,46 @@ mod tests {
             keys[0],
             &repo.to_string_lossy(),
             "el cwd en web/ debe agruparse bajo la raíz git myrepo"
+        );
+    }
+
+    #[test]
+    fn worktree_se_agrupa_bajo_el_repo_principal() {
+        // A linked git worktree has a `.git` FILE (pointer), not a `.git/` dir. A
+        // session whose cwd lives inside `<repo>/.claude/worktrees/<name>/` must fold
+        // under the MAIN repo, not surface as a phantom top-level repo. (This is how
+        // Claude Code's per-session worktrees look on disk.)
+        let dir = tmpdir("worktree");
+        let repo = dir.join("myrepo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let wt = repo.join(".claude").join("worktrees").join("feat");
+        fs::create_dir_all(&wt).unwrap();
+        // The worktree's `.git` is a FILE pointing at <repo>/.git/worktrees/feat.
+        fs::write(
+            wt.join(".git"),
+            format!("gitdir: {}/.git/worktrees/feat\n", repo.to_string_lossy()),
+        )
+        .unwrap();
+        let file = wt.join("src").join("App.tsx");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "x\n").unwrap();
+        let rec = edit_record(
+            "s1",
+            wt.to_str().unwrap(),
+            file.to_str().unwrap(),
+            "2026-01-01T00:00:00Z",
+            "",
+            &["+x"],
+        );
+        write_top_level(&dir, "proj", "s1", &[rec]);
+
+        let c = collect(dir.to_str().unwrap(), None, None);
+        let keys: Vec<&String> = c.repos.keys().collect();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(
+            keys[0],
+            &repo.to_string_lossy(),
+            "un cwd dentro de un worktree enlazado debe agruparse bajo el repo principal"
         );
     }
 

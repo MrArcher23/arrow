@@ -23,6 +23,19 @@ export function isLive(iso?: string | null, now: number = Date.now()): boolean {
   return now - t < LIVE_WINDOW
 }
 
+// A worktree counts as "active" if a file under it was edited within this window
+// — the same 10-min burst that drives the sidebar focus. Honest: this is recent
+// EDIT activity on disk (via Claude's tools), NOT a running process — the same
+// caveat as the green dot / "active session". Older ⇒ "stale".
+export const STALE_AFTER = BURST_WINDOW
+
+export function isActive(iso?: string | null, now: number = Date.now()): boolean {
+  if (!iso) return false
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return false
+  return now - t < STALE_AFTER
+}
+
 // Repos en foco: el de la sesión activa (actividad globalmente más reciente, = repos[0]
 // por el orden que ya garantiza el parser) + cualquier repo tocado dentro de BURST_WINDOW
 // de esa actividad (trabajo en la misma ráfaga). Siempre devuelve ≥1 repo (el más reciente)

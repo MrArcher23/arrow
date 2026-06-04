@@ -5,6 +5,8 @@
   import ThemeMenu from './components/ThemeMenu.svelte'
   import WindowControls from './components/WindowControls.svelte'
   import OpenInEditor from './components/OpenInEditor.svelte'
+  import WorktreesModal from './components/WorktreesModal.svelte'
+  import VersionBadge from './components/VersionBadge.svelte'
   import { listen } from '@tauri-apps/api/event'
   import { loadReport, loadContent, clearContentCache, inTauri } from './lib/api'
   import { loadZoom, applyZoom, clampZoom, ZOOM_STEP } from './lib/zoom'
@@ -21,6 +23,11 @@
   let diffView = $state<{ openSearch: () => void }>()
   let selected = $state<{ session: string; path: string } | null>(null)
   let theme = $state(localStorage.getItem('arrow.theme') ?? DEFAULT_THEME)
+  let showWorktrees = $state(false)
+
+  // Main repo roots the worktree inventory queries (one `git worktree list` each).
+  // Deduped; with the git_root re-anchor these are already main roots, not worktrees.
+  let mainRepoRoots = $derived(report ? [...new Set(report.repos.map((r) => r.cwd))] : [])
 
   // Reloj independiente: un tick periódico (ver onMount) reasigna `now` para que el
   // tiempo relativo ("Nm ago") y el punto verde envejezcan/caduquen aunque el report no
@@ -246,12 +253,24 @@
     <div class="actions">
       {#if liveCount > 0}<span class="live">● {liveCount}</span>{/if}
       {#if report}<span class="repos">{report.repoCount} repos</span>{/if}
+      {#if inTauri && report}
+        <button class="wtbtn" onclick={() => (showWorktrees = true)} title="Worktree inventory">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="4" cy="3.5" r="2" stroke="currentColor" stroke-width="1.4" />
+            <circle cx="4" cy="12.5" r="2" stroke="currentColor" stroke-width="1.4" />
+            <circle cx="12" cy="3.5" r="2" stroke="currentColor" stroke-width="1.4" />
+            <path d="M4 5.5v5M4 9.5c0-4 8-2 8-4" stroke="currentColor" stroke-width="1.4" />
+          </svg>
+          Worktrees
+        </button>
+      {/if}
       <div class="zoom">
         <button class="zbtn" onclick={() => setZoom(zoomFactor - ZOOM_STEP)} title="Zoom out (Ctrl −)" aria-label="Zoom out">−</button>
         <button class="zpct" onclick={() => setZoom(1)} title="Reset zoom (Ctrl 0)" aria-label="Reset zoom">{zoomPct}%</button>
         <button class="zbtn" onclick={() => setZoom(zoomFactor + ZOOM_STEP)} title="Zoom in (Ctrl +)" aria-label="Zoom in">+</button>
       </div>
       <ThemeMenu current={theme} onSelect={(id) => (theme = id)} />
+      <VersionBadge />
       <WindowControls />
     </div>
   </header>
@@ -302,6 +321,15 @@
       </div>
     </main>
   </div>
+
+  {#if showWorktrees && report}
+    <WorktreesModal
+      {report}
+      repoRoots={mainRepoRoots}
+      {now}
+      onClose={() => (showWorktrees = false)}
+    />
+  {/if}
 </div>
 
 <style>
@@ -360,6 +388,25 @@
     color: var(--green);
   }
   .repos {
+    color: var(--dim);
+  }
+  .wtbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--chip);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 9px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .wtbtn:hover {
+    background: var(--hover);
+  }
+  .wtbtn svg {
     color: var(--dim);
   }
   .zoom {
