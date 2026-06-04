@@ -5,7 +5,10 @@ Archivo de seguimiento entre sesiones. El **roadmap canónico de fases** vive en
 backlog de ideas que aún no están comprometidas a ninguna fase. Las **convenciones** del proyecto
 están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 
-> Última actualización: 2026-06-04 (**Worktrees inventory** read-only: lista/clasifica los worktrees
+> Última actualización: 2026-06-04 (**Foco "activo vs idle"**: al abrir arrow sin actividad reciente
+> (<20 min) ya no auto-abre ni marca nada como activo — muestra "No active work" + historial colapsado;
+> + banner honesto si se borró el worktree de un archivo; marca **ARROW** en mayúscula; titlebar nativa
+> oscura en macOS. Antes: **Worktrees inventory** read-only: lista/clasifica los worktrees
 > de git que Claude Code crea por sesión —activos / stale ≥10 min / "merged → safe to remove"— con
 > tamaños bajo demanda y `copy cmd`, sin borrar nada en la app; + badge de versión en la topbar. Antes:
 > distribución macOS (matrix de CI publica el `.dmg` arm64+x64 + `install.sh` one-liner); Fase 2 + pulido:
@@ -166,6 +169,27 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
   inyecta en build con un `define` de Vite leído de `src-tauri/tauri.conf.json` (la fuente que sella el bundle),
   expuesta en `web/src/lib/version.ts` (misma convención aislada que `zoom.ts`/`window.ts`). Funciona igual en
   la app y en `npm run dev` (es síncrono, sin ACL `app:default` ni `getVersion()` async). Texto de UI en inglés.
+
+- **Foco "activo vs idle"** (v0.1.7 — resuelve que arrow presentara trabajo viejo como si fuera actual):
+  arrow distingue **trabajo activo** (última edición < `LIVE_WINDOW` = 20 min) de **idle**. En idle —p.ej.
+  abrir arrow al día siguiente sin estar trabajando— **no** auto-abre ningún diff, **no** muestra punto
+  verde, y el sidebar pasa a un estado **minimalista**: "No active work · last activity Nh ago" + historial
+  colapsado (navegable). `focusRepos(repos, now)` (`time.ts`) devuelve `[]` cuando la actividad más reciente
+  supera la ventana; el auto-select inicial (`App.svelte`) se condiciona a `isLive`. Anclado al **dato**
+  (timestamp), no al reloj. **Self-heal**: si el archivo abierto desaparece del report, se limpia la
+  selección (no se queda clavado). Todo **frontend**, cross-plataforma (también arregla el bug reportado en
+  Mac). **Diagnóstico** (auditoría de 6 agentes con reproducción real): la causa NO era el `git_root` de
+  0.1.6 (verificado compilando ambas versiones) — era pre-existente: el `after` se lee de disco y al borrar
+  el worktree desaparece, dejando solo el `before` (= lo ya pusheado) + la selección clavada.
+- **Banner honesto de "worktree borrado"** (`DiffView.svelte`): si abres un archivo cuyo worktree fue
+  eliminado, el `after` ya no existe en disco; en vez de pintarlo como "deleted file" se muestra *"worktree
+  deleted — showing the last recorded state, not a live diff"*. Detectado por el path `/.claude/worktrees/`
+  en `content.file` (sin tocar el contrato del parser).
+- **Marca en mayúscula** (`ARROW`): `text-transform: uppercase` en `.brand` (la fuente sigue "arrow").
+- **Titlebar nativa oscura en macOS** (`src-tauri`): por defecto seguía la apariencia del sistema (modo
+  claro ⇒ barra **blanca**) y chocaba con el tema oscuro de arrow. Ahora `set_theme(Dark)` + `hiddenTitle`
+  (oculta el título nativo duplicado). Trade-off: con un tema CLARO de arrow la barra desentona un poco.
+  **Sin verificar en hardware Mac** — el `.dmg` de CI lo prueba el mantenedor/líder.
 
 ## Backlog de ideas (sin comprometer fase)
 

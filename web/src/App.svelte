@@ -36,7 +36,7 @@
 
   // Repos con punto verde = los del foco (sesión activa + ráfaga) con actividad reciente.
   let liveCount = $derived(
-    report ? focusReposOf(report.repos).filter((r) => isLive(r.sessions[0]?.lastActivity, now)).length : 0
+    report ? focusReposOf(report.repos, now).filter((r) => isLive(r.sessions[0]?.lastActivity, now)).length : 0
   )
 
   // Zoom de la UI (estilo VSCode/terminal): Ctrl +/−/0. El estado vive aquí (reactivo);
@@ -155,10 +155,13 @@
       clearContentCache()
       report = r
       if (initial) {
-        // Solo en la primera carga auto-seleccionamos; los refrescos NO roban foco.
+        // Auto-open the top file ONLY when there is ACTIVE work (a recent edit). On an idle
+        // launch — e.g. opening arrow the next day, not working on anything yet — we show
+        // nothing as current (honest): the sidebar shows collapsed history instead. Anchored
+        // to the data timestamp (isLive), not "the last thing arrow ever saw".
         const s = r.repos[0]?.sessions[0]
         const f = s?.files[0]
-        if (s && f) select(s.sessionId, f.path)
+        if (s && f && isLive(s.lastActivity)) select(s.sessionId, f.path)
       } else if (selected && fileStillInReport(r, selected)) {
         // Live refresh closes the loop: re-fetch the OPEN file's diff in place. Same selection
         // (no focus steal), and no blank flash — unlike select(), we keep the current diff shown
@@ -172,6 +175,11 @@
         } catch {
           /* keep showing the prior diff; the next refresh will retry */
         }
+      } else if (selected) {
+        // The open file aged out of the report (its session/file is gone) → don't keep
+        // showing a stale diff; drop the selection so the panel returns to a clean state.
+        selected = null
+        content = null
       }
     } catch (e) {
       error = String(e)
@@ -372,6 +380,7 @@
   .brand {
     font-weight: 700;
     letter-spacing: 0.5px;
+    text-transform: uppercase;
   }
   .subtitle {
     color: var(--dim);

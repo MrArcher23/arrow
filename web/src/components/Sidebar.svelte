@@ -12,19 +12,23 @@
 
   // Foco: los repos de la sesión activa (la de actividad más reciente) + cualquiera tocado
   // en la misma ráfaga (~10 min). El resto va a "Other repos". Lógica única en time.ts.
-  let focusRepos = $derived(focusReposOf(report.repos))
+  // IDLE (sin actividad reciente, p.ej. abrir arrow al día siguiente): focusRepos = [] →
+  // todo cae al historial colapsado y no se pinta nada como "activo".
+  let focusRepos = $derived(focusReposOf(report.repos, now))
   let otherRepos = $derived(report.repos.filter((r) => !focusRepos.includes(r)))
+  let idle = $derived(focusRepos.length === 0)
+  let lastActivity = $derived(report.repos[0]?.sessions[0]?.lastActivity ?? null)
 
   function focusDefaults() {
     const o: Record<string, boolean> = {}
-    for (const r of focusReposOf(report.repos)) o[r.cwd] = true
+    for (const r of focusReposOf(report.repos, now)) o[r.cwd] = true
     return o
   }
   let openRepos = $state<Record<string, boolean>>(focusDefaults())
 
   // Tras un refresco, auto-expandir los repos del foco nuevos sin pisar los toggles del usuario.
   $effect(() => {
-    const fset = new Set(focusReposOf(report.repos).map((r) => r.cwd))
+    const fset = new Set(focusReposOf(report.repos, now).map((r) => r.cwd))
     let changed = false
     const next = { ...openRepos }
     for (const r of report.repos) {
@@ -155,6 +159,15 @@
 {/snippet}
 
 <nav class="tree">
+  {#if idle}
+    <!-- No active work right now (most recent edit is older than the live window). Show
+         nothing as current — just a quiet note + the collapsed history below. -->
+    <div class="idle">
+      <span class="idle-title">No active work</span>
+      {#if lastActivity}<span class="idle-sub">last activity {relative(lastActivity, now)}</span>{/if}
+    </div>
+  {/if}
+
   {#each focusRepos as repo}
     {@render repoRow(repo, true)}
   {/each}
@@ -162,7 +175,7 @@
   {#if otherRepos.length}
     <button class="row others-head" onclick={() => (openOthers = !openOthers)}>
       <span class="chev">{openOthers ? '▾' : '▸'}</span>
-      <span class="others-label">Other repos</span>
+      <span class="others-label">{idle ? 'History' : 'Other repos'}</span>
       <span class="count">{otherRepos.length}</span>
     </button>
     {#if openOthers}
@@ -347,5 +360,21 @@
   }
   .others {
     opacity: 0.85;
+  }
+  /* Idle state (no recent activity): a quiet note above the collapsed history. */
+  .idle {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 10px 12px;
+    color: var(--dim);
+  }
+  .idle-title {
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .idle-sub {
+    font-size: 11px;
+    opacity: 0.8;
   }
 </style>

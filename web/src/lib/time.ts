@@ -38,13 +38,18 @@ export function isActive(iso?: string | null, now: number = Date.now()): boolean
 
 // Repos en foco: el de la sesión activa (actividad globalmente más reciente, = repos[0]
 // por el orden que ya garantiza el parser) + cualquier repo tocado dentro de BURST_WINDOW
-// de esa actividad (trabajo en la misma ráfaga). Siempre devuelve ≥1 repo (el más reciente)
-// como fallback de navegación. Devuelve REFERENCIAS del array original (no copias) para que
-// el complemento `otherRepos` por identidad de objeto siga funcionando.
-export function focusRepos(repos: Repo[]): Repo[] {
+// de esa actividad (trabajo en la misma ráfaga). Devuelve REFERENCIAS del array original
+// (no copias) para que el complemento `otherRepos` por identidad de objeto siga funcionando.
+//
+// IDLE: si la actividad más reciente es más vieja que LIVE_WINDOW (p.ej. abrir arrow al día
+// siguiente sin estar trabajando), NO hay trabajo activo → devuelve [] (sin foco, sin punto
+// verde, sin auto-abrir). El sidebar pinta todo como historial colapsado. Anclado al DATO
+// (timestamp del último edit) vía el `now` reactivo, así cruza a idle solo cuando toca.
+export function focusRepos(repos: Repo[], now: number = Date.now()): Repo[] {
   const top = repos[0]?.sessions[0]?.lastActivity
   const t0 = top ? Date.parse(top) : NaN
-  if (Number.isNaN(t0)) return repos.slice(0, 1)
+  if (Number.isNaN(t0)) return []
+  if (now - t0 >= LIVE_WINDOW) return [] // idle: nada reciente que enfocar
   return repos.filter((r) => {
     const la = r.sessions[0]?.lastActivity
     const t = la ? Date.parse(la) : NaN

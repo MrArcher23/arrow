@@ -227,6 +227,10 @@
 <div class="diff-wrap">
   {#if mode === 'created'}
     <div class="banner created">＋ new file</div>
+  {:else if mode === 'deleted' && content?.file.includes('/.claude/worktrees/')}
+    <!-- The file's on-disk copy is gone because its git worktree was deleted. Be honest:
+         this is the last recorded state (= what was committed/pushed), not a live diff. -->
+    <div class="banner unknown">⚠ worktree deleted — showing the last recorded state, not a live diff</div>
   {:else if mode === 'deleted'}
     <div class="banner deleted">－ deleted file</div>
   {:else if mode === 'unknown'}

@@ -165,9 +165,15 @@ pub fn run() {
             // macOS: restaurar la decoración nativa (semáforos rojo/amarillo/verde). En
             // Linux/Windows mantenemos la titlebar custom (decorations:false del config),
             // porque ahí el WM no pinta los botones de min/max de forma fiable.
+            // Además forzamos la titlebar nativa a OSCURO: por defecto sigue la apariencia del
+            // sistema (modo claro ⇒ barra BLANCA) y choca con el tema oscuro de arrow. El
+            // título nativo se oculta vía `hiddenTitle` en tauri.conf.json (evita el "arrow"
+            // duplicado). Trade-off aceptado: con un tema CLARO de arrow la barra desentona un
+            // poco. (Sin verificar en hardware Mac — ver ROADMAP.)
             #[cfg(target_os = "macos")]
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.set_decorations(true);
+                let _ = win.set_theme(Some(tauri::Theme::Dark));
             }
             Ok(())
         })
