@@ -109,8 +109,9 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 - **"Worktrees inventory"** (nuevo, read-only, Tauri-only — botón `Worktrees` en la topbar → modal): lista
   los **git worktrees** que Claude Code va creando por sesión, agrupados por repo, y los clasifica en
   **active / stale / merged ("safe to remove")**, con tamaño en disco **bajo demanda** y un `copy cmd` por
-  fila. **NO borra nada desde la app** (el botón `Clean` se difiere — ver backlog); la imagen-espejo del
-  problema que "Open in editor" resolvió para la edición, pero para la **higiene de disco**.
+  fila. Un botón **`Clean`** (Tauri-only) ejecuta la limpieza tras dry-run + confirmación — ver
+  "Worktree `Clean`" abajo; la imagen-espejo del problema que "Open in editor" resolvió para la edición,
+  pero para la **higiene de disco**.
 
   - **Por qué se agrega (el dolor real):** la app de escritorio de Claude Code crea un worktree por sesión
     en `<repo>/.claude/worktrees/<nombre>/` (nombre random `adjetivo-verbo-sustantivo`, ej. `wise-plotting-graham`).
@@ -155,8 +156,9 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
       locked no se ofrece como "safe to remove" (`worktree remove` lo rechaza); prunable sugiere
       `git worktree prune`, no `remove`; el **worktree principal** se marca y nunca se ofrece para borrar.
     - **Tamaño = aproximado** (bytes aparentes vía `walkdir`, sin seguir symlinks); se etiqueta como tal.
-    - **Read-only:** `copy cmd` copia el `git worktree remove <path>` para que **el usuario** lo corra; arrow
-      no muta el estado de git. (El botón `Clean` in-app se difiere a propósito — ver backlog.)
+    - **Limpieza (`Clean`):** además del `copy cmd`, un botón **`Clean`** (Tauri-only) corre
+      `git worktree remove` **sin `--force`** tras dry-run + confirmación; es la **única** acción que muta
+      disco en arrow y solo se ofrece en filas que git realmente limpiaría. Detalle abajo en "Worktree `Clean`".
 
   - **Fix colateral en el parser (`git_root`, `src/lib.rs`):** un worktree enlazado tiene un `.git` que es un
     **FILE** (`gitdir: …/.git/worktrees/<name>`), y `git_root` usaba `dir.join(".git").exists()` (true también
@@ -207,16 +209,16 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
 - **Atajos de teclado** — navegar el árbol y abrir diffs sin ratón (j/k, enter, etc.). (Los atajos de
   **zoom** `Ctrl +/−/0` ya están; faltan los de navegación. Reusarían el mismo `keydown` global de
   `App.svelte` (`onKey`).)
-- **Botón `Clean` in-app para worktrees** (diferido del "Worktrees inventory"; sería la **única acción
-  destructiva** de arrow, así que cruza la línea read-only y encaja en la Fase 4 de edición). Hoy el modal
-  solo lista + `copy cmd`. Un `Clean` exigiría **blindaje fuerte**, según la auditoría de seguridad: correr
-  `git worktree remove` (nunca `rm -rf`, luego `worktree prune`); **rechazar** worktrees con
-  `git status --porcelain` no vacío (sucios/untracked — p.ej. el `.deb` sin trackear de este repo se
-  perdería con `--force`); **nunca** `--force` ni `branch -d/-D` automático (una rama sin upstream es la
-  única copia); tratar detached/locked como hard-stop; nunca el worktree principal; y mostrar el comando
-  exacto antes de ejecutarlo. **Riesgo central** (reproducido): un detector de "merged" laxo (que confíe en
-  `git cherry` en vez de ancestro estricto o el forge) + un borrado de rama destruiría trabajo no fusionado.
-  Por eso el MVP se queda en read-only.
+- **Worktree `Clean` (in-app)** — ✅ implementado (Tauri-only; la **única acción que muta disco** en arrow,
+  por eso va detrás de dry-run + confirmación explícita). Backend en `src-tauri/src/worktrees.rs`
+  (`remove_worktree`/`prune_worktrees` → `CleanupResult`, comandos Tauri `remove_worktree`/`prune_worktrees`
+  que emiten `report-changed` al terminar). Blindaje aplicado: corre `git worktree remove` **sin `--force`**
+  (git mismo rechaza un worktree locked/sucio/untracked — p.ej. el `.deb` sin trackear se salva), **nunca**
+  `rm -rf` ni `branch -d/-D`; el botón solo aparece en filas que git limpiaría (merged+clean+unlocked, o
+  prunable), nunca en el worktree principal/dirty/locked/activo; muestra el comando exacto antes de correrlo
+  y surfacea el mensaje de git verbatim si rehúsa. UI: botón `Clean`/`Prune` + barra de confirmación en
+  `WorktreesModal.svelte`; en el navegador (dev) degrada a `copy cmd` (no se expone por HTTP).
+  Test: `remove_deletes_a_real_worktree_without_force`.
 - **Detección de "merged" más fina para squash/rebase** — hoy un squash-merge se reporta honesto como
   "can't tell" (la rama no es ancestro aunque el trabajo esté en `main`). Mejora: consultar el forge
   (`gh pr view --json mergedAt`) o `range-diff` para **subir** la confianza a "likely merged", sin que deje

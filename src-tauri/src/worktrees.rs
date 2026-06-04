@@ -2,8 +2,10 @@
 //! creates per session (under `<repo>/.claude/worktrees/<name>/`), so the user
 //! can spot stale or already-merged ones eating disk.
 //!
-//! READ-ONLY: arrow never removes a worktree. It reports git facts and lets the
-//! UI hand the user a `git worktree remove` command to run themselves. Tauri-only
+//! Listing/classifying is READ-ONLY. The one exception is the opt-in "Clean"
+//! action (`remove_worktree`/`prune_worktrees` below) — the only place in arrow
+//! that mutates disk — gated behind a dry-run + confirmation in the UI and run
+//! WITHOUT `--force`, so git itself refuses a locked or dirty worktree. Tauri-only
 //! (the browser dev-server has no equivalent) and — exactly like `editor.rs` —
 //! ALL the git shelling lives here, so the parser lib (`src/lib.rs`) stays
 //! git-free (the product premise: "without depending on git or hooks").
@@ -324,6 +326,109 @@ fn dir_size(path: &str) -> u64 {
         .sum()
 }
 
+// --- Stage 2: removal (the ONLY part of arrow that mutates the disk) ---------
+//
+// READ-ONLY is the default everywhere else in arrow; this is the single, opt-in
+// exception, reached only by an explicit user action (the "Clean" button) and
+// only after a dry-run + confirmation in the UI. `remove` runs WITHOUT `--force`,
+// so git itself refuses to drop a worktree that is locked or has uncommitted /
+// untracked changes — a free safety net we deliberately keep (matching the
+// honesty rules above: we never promise a removal git would refuse).
+
+/// Outcome of a removal/prune attempt (or its dry-run preview).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupResult {
+    /// git exited 0 (for a dry-run, always `true` — nothing was attempted).
+    pub ok: bool,
+    /// This was a preview only; the disk was not touched.
+    pub dry_run: bool,
+    /// The exact command, shell-quoted, for display / copy / an audit log.
+    pub command: String,
+    /// What git said (stdout + stderr), trimmed. Surfaced verbatim so a refusal
+    /// ("contains modified or untracked files") is shown honestly, not hidden.
+    pub output: String,
+}
+
+/// Quote a path for the DISPLAYED command only (the real call is argv-direct, so
+/// it never goes through a shell — this just makes the copy-paste string correct
+/// when a path has spaces).
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Run `git -C <repo> <args>` capturing stdout+stderr and success. Unlike the
+/// read-only `run_git`, this keeps stderr: a removal that git refuses must show
+/// its reason. Mutating ops are user-initiated, local, and tiny, so the blocking
+/// `.output()` (no timeout) is acceptable here.
+fn run_git_capture(repo: &str, args: &[&str]) -> (bool, String) {
+    match Command::new("git").arg("-C").arg(repo).args(args).output() {
+        Ok(o) => {
+            let mut s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            let err = String::from_utf8_lossy(&o.stderr);
+            let err = err.trim();
+            if !err.is_empty() {
+                if !s.is_empty() {
+                    s.push('\n');
+                }
+                s.push_str(err);
+            }
+            (o.status.success(), s)
+        }
+        Err(e) => (false, format!("failed to run git: {e}")),
+    }
+}
+
+/// Remove a linked worktree. No `--force` (git refuses on locked / uncommitted /
+/// untracked changes). `git worktree remove` has no native dry-run, so `dry_run`
+/// reports the command without touching anything.
+pub fn remove_worktree(repo: &str, path: &str, dry_run: bool) -> CleanupResult {
+    let command = format!(
+        "git -C {} worktree remove {}",
+        shell_quote(repo),
+        shell_quote(path)
+    );
+    if dry_run {
+        return CleanupResult {
+            ok: true,
+            dry_run: true,
+            command,
+            output: "dry run — not executed (git would refuse if the worktree is \
+                     locked or has uncommitted/untracked changes)"
+                .to_string(),
+        };
+    }
+    let (ok, output) = run_git_capture(repo, &["worktree", "remove", path]);
+    CleanupResult {
+        ok,
+        dry_run: false,
+        command,
+        output,
+    }
+}
+
+/// Prune phantom worktree entries (their directories are gone). Uses git's native
+/// dry-run (`-n`) to preview, so the dry-run is a real git report, not a guess.
+pub fn prune_worktrees(repo: &str, dry_run: bool) -> CleanupResult {
+    let args: &[&str] = if dry_run {
+        &["worktree", "prune", "-n", "-v"]
+    } else {
+        &["worktree", "prune", "-v"]
+    };
+    let command = format!(
+        "git -C {} worktree prune -v{}",
+        shell_quote(repo),
+        if dry_run { " -n" } else { "" }
+    );
+    let (ok, output) = run_git_capture(repo, args);
+    CleanupResult {
+        ok,
+        dry_run,
+        command,
+        output,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,5 +482,80 @@ some-future-field whatever
         let e = parse_porcelain(text);
         assert_eq!(e.len(), 1, "the bare worktree is dropped");
         assert_eq!(e[0].branch.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn remove_dry_run_quotes_and_does_not_touch_disk() {
+        // Pure: a dry-run for `remove` never shells out, so it needs no git.
+        let res = remove_worktree("/repo with space", "/repo with space/wt", true);
+        assert!(res.ok && res.dry_run);
+        assert_eq!(
+            res.command, "git -C '/repo with space' worktree remove '/repo with space/wt'",
+            "the displayed command is shell-quoted for safe copy-paste"
+        );
+    }
+
+    #[test]
+    fn remove_deletes_a_real_worktree_without_force() {
+        // Hermetic integration: a real temp git repo + a linked worktree, then
+        // remove it. Skips cleanly if git is unavailable in the test environment.
+        if run_git(".", &["--version"]).is_none() {
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("arrow-wt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo = base.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git_in = |dir: &Path, args: &[&str]| {
+            Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap();
+        };
+        git_in(&repo, &["init", "-q", "-b", "main"]);
+        git_in(&repo, &["config", "user.email", "t@t"]);
+        git_in(&repo, &["config", "user.name", "t"]);
+        std::fs::write(repo.join("a.txt"), "x\n").unwrap();
+        git_in(&repo, &["add", "-A"]);
+        git_in(&repo, &["commit", "-q", "-m", "init"]);
+        let wt = base.join("wt-feature");
+        git_in(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                wt.to_str().unwrap(),
+                "-b",
+                "feature",
+            ],
+        );
+
+        let repo_s = repo.to_string_lossy().to_string();
+        let repos = list_worktrees(std::slice::from_ref(&repo_s));
+        assert_eq!(
+            repos.len(),
+            1,
+            "the repo with one linked worktree is listed"
+        );
+        assert!(repos[0].worktrees.iter().any(|w| !w.is_main));
+
+        // Dry-run does not touch disk.
+        let dry = remove_worktree(&repo_s, wt.to_str().unwrap(), true);
+        assert!(dry.ok && dry.dry_run);
+        assert!(wt.exists(), "dry-run must NOT remove the worktree");
+
+        // Real removal (no uncommitted changes → git allows it without --force).
+        let res = remove_worktree(&repo_s, wt.to_str().unwrap(), false);
+        assert!(res.ok, "remove should succeed: {}", res.output);
+        assert!(!wt.exists(), "the worktree must be gone");
+
+        // prune dry-run runs cleanly even with no phantoms.
+        let pr = prune_worktrees(&repo_s, true);
+        assert!(pr.ok && pr.dry_run);
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

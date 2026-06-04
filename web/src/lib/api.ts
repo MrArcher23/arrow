@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { Report, FileContent, Editor, RepoWorktrees, UpdateStatus } from './types'
+import type { Report, FileContent, Editor, RepoWorktrees, CleanupResult, UpdateStatus } from './types'
 
 // Única capa que conoce el transporte. Dos modos, MISMO contrato:
 //   - App de escritorio (Tauri): llama al backend Rust vía invoke() — sin HTTP.
@@ -91,4 +91,22 @@ export async function openUrl(url: string): Promise<void> {
     return
   }
   await invoke('open_url', { url })
+}
+
+// Remove a worktree (the "Clean" action) — the only mutating call in arrow.
+// Tauri-only and never exposed over HTTP: in the browser dev build it throws, so
+// the UI degrades to "copy cmd" instead. `dryRun` previews without touching disk.
+export async function removeWorktree(
+  repo: string,
+  path: string,
+  dryRun: boolean
+): Promise<CleanupResult> {
+  if (!inTauri) throw new Error('Cleaning worktrees is only available in the desktop app')
+  return invoke<CleanupResult>('remove_worktree', { repo, path, dryRun })
+}
+
+// Prune a repo's phantom worktree entries (`git worktree prune`). Tauri-only.
+export async function pruneWorktrees(repo: string, dryRun: boolean): Promise<CleanupResult> {
+  if (!inTauri) throw new Error('Cleaning worktrees is only available in the desktop app')
+  return invoke<CleanupResult>('prune_worktrees', { repo, dryRun })
 }
