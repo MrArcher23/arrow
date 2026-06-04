@@ -853,7 +853,8 @@ fn git_root(cwd: &str, cache: &mut HashMap<String, String>) -> String {
             // repo (which double-counted it and mixed it with real repos). Falls back
             // to the worktree dir if the pointer isn't a recognizable worktree shape.
             // Filesystem-only (reads one small dotfile) — the lib still never spawns git.
-            root = worktree_main_root(&dot_git).unwrap_or_else(|| dir.to_string_lossy().into_owned());
+            root =
+                worktree_main_root(&dot_git).unwrap_or_else(|| dir.to_string_lossy().into_owned());
             break;
         }
         if !dir.pop() {

@@ -239,7 +239,12 @@ fn parse_porcelain(text: &str) -> Vec<RawWt> {
     entries.into_iter().filter(|e| !e.bare).collect()
 }
 
-fn classify_worktree(root: &str, e: RawWt, is_main: bool, default_ref: Option<&str>) -> WorktreeOut {
+fn classify_worktree(
+    root: &str,
+    e: RawWt,
+    is_main: bool,
+    default_ref: Option<&str>,
+) -> WorktreeOut {
     let dirty = match git_stdout(&e.path, &["status", "--porcelain"]) {
         Some(s) => !s.trim().is_empty(),
         None => false, // can't tell → don't cry wolf
@@ -277,7 +282,10 @@ fn classify_worktree(root: &str, e: RawWt, is_main: bool, default_ref: Option<&s
 fn resolve_default_branch(root: &str) -> Option<(String, String)> {
     // 1. origin/HEAD symbolic ref (offline; present only if it was ever set).
     //    Compare against the remote-tracking ref, which exists locally.
-    if let Some(s) = git_stdout(root, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]) {
+    if let Some(s) = git_stdout(
+        root,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    ) {
         if let Some(b) = s.trim().strip_prefix("origin/") {
             if !b.is_empty() {
                 return Some((b.to_string(), format!("origin/{b}")));
@@ -288,7 +296,12 @@ fn resolve_default_branch(root: &str) -> Option<(String, String)> {
     for cand in ["main", "master", "develop", "trunk"] {
         if git_ok(
             root,
-            &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{cand}")],
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{cand}"),
+            ],
         ) {
             return Some((cand.to_string(), cand.to_string()));
         }
