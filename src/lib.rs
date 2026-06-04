@@ -31,6 +31,12 @@ use serde::Serialize;
 use serde_json::Value;
 use walkdir::WalkDir;
 
+// Opt-in, secondary network layer (release-update check). Kept out of the parser
+// hot path — `build_report`/`file_content` never touch it; same separation as the
+// git worktree layer.
+pub mod update;
+pub use update::{check_update, UpdateStatus};
+
 // ---------------------------------------------------------------------------
 // Modelo interno (acumulación)
 // ---------------------------------------------------------------------------

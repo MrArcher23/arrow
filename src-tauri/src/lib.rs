@@ -73,6 +73,38 @@ fn worktree_sizes(paths: Vec<String>) -> std::collections::HashMap<String, u64> 
     worktrees::worktree_sizes(&paths)
 }
 
+/// Check GitHub for a newer arrow release (for the version badge's "update
+/// available" hint). Network-bound but time-boxed; read-only — it never
+/// downloads or installs. Runs off the UI thread via `spawn_blocking`.
+#[tauri::command]
+async fn check_update() -> arrow::UpdateStatus {
+    tauri::async_runtime::spawn_blocking(|| arrow::check_update(env!("CARGO_PKG_VERSION")))
+        .await
+        .unwrap_or_else(|_| arrow::check_update(env!("CARGO_PKG_VERSION")))
+}
+
+/// Open a URL in the user's default browser (the "Open release" action). Only
+/// `https://` URLs are honored, so the command can't be coaxed into launching a
+/// local file or a `file://`/`javascript:` scheme. Argv-direct (no shell).
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("refusing to open a non-https URL".into());
+    }
+    #[cfg(target_os = "macos")]
+    let (bin, args): (&str, Vec<String>) = ("open", vec![url]);
+    #[cfg(target_os = "linux")]
+    let (bin, args): (&str, Vec<String>) = ("xdg-open", vec![url]);
+    #[cfg(target_os = "windows")]
+    let (bin, args): (&str, Vec<String>) =
+        ("cmd", vec!["/C".into(), "start".into(), String::new(), url]);
+    std::process::Command::new(bin)
+        .args(args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("couldn't open the browser: {e}"))
+}
+
 /// Watcher nativo: vigila `~/.claude/projects` y, con debounce, emite
 /// `report-changed` para que el frontend refresque sin polling.
 ///
@@ -158,7 +190,9 @@ pub fn run() {
             editors,
             open_in_editor,
             worktrees,
-            worktree_sizes
+            worktree_sizes,
+            check_update,
+            open_url
         ])
         .setup(|app| {
             spawn_watcher(app.handle().clone());

@@ -23,8 +23,11 @@ empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web 
   / `npm run build` **sin** `--prefix web` (un `--prefix web` buscaría `web/web/package.json` y falla).
   `src-tauri/` es su **propia raíz de workspace**: `cargo build` en la raíz NO arrastra el backend Tauri.
 - Build del frontend: `npm --prefix web run build`.
-- **Tests**: 20 tests unitarios del parser en `src/lib.rs` (`cargo test --release`). Complementan
-  —no reemplazan— la verificación contra datos reales del skill `/verify-parser`.
+- **Tests**: 24 tests unitarios en el crate del parser (`src/lib.rs` + `src/update.rs`, `cargo test --release`).
+  Complementan —no reemplazan— la verificación contra datos reales del skill `/verify-parser`.
+- **Update check** (`src/update.rs`, capa de red opt-in y secundaria — el parser nunca la llama): consulta
+  el último Release de GitHub vía `curl` (sin dep HTTP) y **solo avisa** si hay versión nueva, nunca instala.
+  Expuesto en CLI (`--check-update [--json]`), Tauri (`check_update`/`open_url`) y la VersionBadge.
 
 ## Modelo de datos (lo NO obvio — léelo antes de tocar el parser)
 - Fuente de verdad: transcripts NATIVOS `~/.claude/projects/<dir>/<sessionId>.jsonl`. **No se usa ningún hook.**
