@@ -101,12 +101,20 @@ jobs:
       - name: Build the desktop bundles
         run: cargo tauri build ${{ matrix.bundles }}
 
+      # Each matrix job publishes ITS OWN artifacts to the same tag. action-gh-release is
+      # idempotent on the tag (creates the Release if missing, appends assets if it exists), and
+      # @v2 resolves to a version that handles the concurrent same-tag create race (the 422
+      # "already_exists" path). The body is kept GENERIC on purpose: with fail-fast:false a single
+      # platform can fail while another still publishes, so the notes must not enumerate artifacts
+      # that may not be attached — the actual files are listed in the release's Assets. If this
+      # ever flakes, the robust pattern is a build matrix (upload-artifact) + one dependent publish
+      # job that downloads all artifacts and releases once.
       - name: Publish the GitHub Release with the bundles
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: "arrow ${{ github.ref_name }}"
-          body: "Desktop bundles for arrow ${{ github.ref_name }}: .deb + AppImage (Linux), .dmg (macOS arm64 + x64). See the commit history for details."
+          body: "Desktop bundles for arrow ${{ github.ref_name }} — see the attached assets (.deb + AppImage on Linux, .dmg on macOS) and the commit history for details."
           draft: false
           prerelease: false
           files: ${{ matrix.artifacts }}

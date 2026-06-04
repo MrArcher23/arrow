@@ -151,13 +151,16 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
   `\ No newline at end of file` no se modela (no aparece en `structuredPatch` real). **Posible mejora
   (Fase 3):** usar `~/.claude/file-history/<sessionId>/<sha256(path)[:16]>@v<n>` (snapshot canónico) para
   los casos con drift donde el reverse-apply aborta.
-- **Build de macOS en CI** — ✅ resuelto. `release.yml` es ahora una **matrix** (Linux `ubuntu-22.04`
-  + `macos-14` arm64 + `macos-13` Intel): cada tag `v*` compila y publica los dos `.dmg` (ad-hoc
-  signed, sin secretos) junto al `.deb` + AppImage, en runners de macOS **gratis** (sin Mac física).
-  Encima va `install.sh` (raíz), el one-liner `curl … | bash` que baja el `.dmg` del último Release y
-  lo deja en `/Applications`. **Pendiente:** firma/notarización (Apple Developer, ~99 USD/año) para
-  quitar la fricción de Gatekeeper, y un **Homebrew Cask** (`brew install --cask`) con upgrade/uninstall.
+- **Build de macOS en CI** — 🟡 configurado, pendiente el primer tag real. `release.yml` es ahora una
+  **matrix** (Linux `ubuntu-22.04` + `macos-14` arm64 + `macos-13` Intel) preparada para que cada tag
+  `v*` compile y publique los dos `.dmg` (ad-hoc signed, sin secretos) junto al `.deb` + AppImage, en
+  runners de macOS **gratis** (sin Mac física). Encima va `install.sh` (raíz), el one-liner
+  `curl … | bash` que baja el `.dmg` del último Release y lo deja en `/Applications` (falla con un
+  mensaje claro si todavía no hay `.dmg`). **Aún no se ha empujado ningún tag con esta matrix**, así
+  que no existe un `.dmg` publicado todavía: el primer `v*` lo generará. **Pendiente:** correr ese
+  primer tag, la firma/notarización (Apple Developer, ~99 USD/año) para quitar la fricción de
+  Gatekeeper, y un **Homebrew Cask** (`brew install --cask`) con upgrade/uninstall.
 - **macOS sin verificar en hardware**: el código ya está adaptado a Mac (titlebar nativa + font-weight
-  por OS; ver [MACOS.md](MACOS.md)) y el `.dmg` ya se construye en CI, pero el bloque
+  por OS; ver [MACOS.md](MACOS.md)) y la matrix ya **construirá** el `.dmg` en CI, pero el bloque
   `cfg(target_os = "macos")` y el `install.sh` aún **no se probaron en una Mac real** → falta correr
   un tag y confirmar el look de la titlebar, que el `.dmg` monta y que el one-liner instala bien.

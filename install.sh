@@ -43,11 +43,16 @@ RELEASE_JSON="$(curl -fsSL -H "Accept: application/vnd.github+json" "$API_URL")"
   || err "could not reach the GitHub API. Check your connection or try again later."
 
 # Pick the browser_download_url of the .dmg whose name contains our arch suffix.
+# The trailing `|| true` is REQUIRED: under `set -euo pipefail`, a no-match `grep` exits 1,
+# which would abort the script AT this assignment — before the friendly guard below could run,
+# leaving the user with a bare `exit 1` and no message (the common case until the first macOS
+# .dmg is published). `|| true` lets the assignment succeed with an empty value so the explicit
+# check on the next line emits the actionable error instead.
 DMG_URL="$(printf '%s' "$RELEASE_JSON" \
   | grep -o '"browser_download_url": *"[^"]*"' \
   | sed 's/.*"browser_download_url": *"\([^"]*\)".*/\1/' \
   | grep "_${ARCH_SUFFIX}\.dmg$" \
-  | head -n 1)"
+  | head -n 1 || true)"
 
 [ -n "$DMG_URL" ] || err "no .dmg for '${ARCH_SUFFIX}' in the latest release. It may not be published yet — see https://github.com/${REPO}/releases"
 

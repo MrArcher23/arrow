@@ -26,7 +26,8 @@ opening an IDE, without AI chat, and **without depending on git or hooks**.
 
 ## Install (Linux)
 
-> **Linux (x86-64) and macOS (Apple Silicon + Intel) have pre-built bundles.** Windows is **not
+> **Linux (x86-64) has pre-built bundles.** macOS (Apple Silicon + Intel) bundles are built and
+> published by CI for each tagged release — see [Install (macOS)](#install-macos). Windows is **not
 > built yet**; build from source there (see *Desktop app* below). The macOS `.dmg` is **unsigned**
 > (no Apple notarization yet — see [MACOS.md](MACOS.md) and the [roadmap](ROADMAP.md)), so the first
 > launch needs one extra step (covered in [Install (macOS)](#install-macos)).
@@ -48,9 +49,10 @@ Debian 12+, Fedora 37+, and newer). On older systems, build from source.
 
 ## Install (macOS)
 
-> Apple Silicon and Intel Macs both have a published `.dmg`. The app is **unsigned** (no Apple
-> notarization yet), so macOS Gatekeeper would normally block the first launch — the one-liner below
-> handles that for you.
+> Each tagged release publishes an **unsigned** `.dmg` for both Apple Silicon and Intel, built by
+> CI (no Apple notarization yet), so macOS Gatekeeper would normally block the first launch — the
+> one-liner below handles that for you. If no macOS release has been published yet, the installer
+> says so and exits cleanly; meanwhile, build from source (see *Desktop app* below).
 
 **One-liner (recommended):** downloads the right `.dmg` for your chip from the latest release,
 installs `arrow.app` into `/Applications`, and clears the Gatekeeper quarantine flag:

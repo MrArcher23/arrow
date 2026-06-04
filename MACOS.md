@@ -77,7 +77,7 @@ cargo tauri build --bundles app dmg
 
 Salida (la arquitectura depende del chip: `aarch64` en Apple Silicon, `x64` en Intel):
 
-- **`.dmg`** → `src-tauri/target/release/bundle/dmg/arrow_0.1.0_<arch>.dmg`
+- **`.dmg`** → `src-tauri/target/release/bundle/dmg/arrow_<version>_<arch>.dmg`
 - **`.app`** → `src-tauri/target/release/bundle/macos/arrow.app`
 
 ## Instalar / probar
@@ -128,21 +128,25 @@ Developer (~99 USD/año) — fuera del alcance de este MVP.
 
 ## Build en CI (sin Mac)
 
-**Ya configurado.** `.github/workflows/release.yml` compila el `.dmg` en la nube en cada tag `v*`:
-una **matrix** con runners `macos-14` (Apple Silicon) y `macos-13` (Intel) corre
-`cargo tauri build --bundles app dmg` y publica los dos `.dmg` en el GitHub Release (junto al `.deb`
+**Configurado (matrix lista); pendiente el primer tag real que la ejecute.**
+`.github/workflows/release.yml` está preparado para compilar el `.dmg` en la nube en cada tag `v*`:
+una **matrix** con runners `macos-14` (Apple Silicon) y `macos-13` (Intel) correrá
+`cargo tauri build --bundles app dmg` y publicará los dos `.dmg` en el GitHub Release (junto al `.deb`
 + AppImage de Linux). Los runners de macOS son **gratis en repos públicos**; no se necesita una Mac
 física ni `tauri-action` (se invoca `cargo tauri` directo, igual que en Linux, porque el `package.json`
 vive en `web/`). El `.dmg` se genera con **ad-hoc signing** (sin certificado), así que **no requiere
-secretos** — pero queda **sin notarizar** (ver Gatekeeper arriba).
+secretos** — pero queda **sin notarizar** (ver Gatekeeper arriba). Aún **no se ha empujado ningún tag
+con esta matrix**, así que todavía no existe un `.dmg` publicado: el primer `v*` lo generará.
 
-Sobre ese `.dmg` publicado, `install.sh` (raíz del repo) da el instalador de un comando:
+Sobre ese `.dmg` (a partir del primer tag que lo publique), `install.sh` (raíz del repo) da el
+instalador de un comando:
 `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/MrArcher23/arrow/main/install.sh)"`.
 
 ## Estado
 
 - ✅ Código adaptado a macOS (titlebar nativa + font-weight por OS).
-- ✅ **`.dmg` publicado por CI** (matrix arm64 + x64 en `release.yml`) + `install.sh` (one-liner).
+- 🟡 **Matrix de CI lista** (arm64 + x64 en `release.yml`) + `install.sh` (one-liner): **escritos pero
+  aún no ejecutados** — el primer tag `v*` publicará los `.dmg`.
 - ⏳ **Sin verificar en una Mac todavía:** el bloque `cfg(target_os = "macos")` solo se activa al
   compilar en macOS. Falta correr un tag real y confirmar en una Mac el look de la titlebar, que el
   `.dmg` monta y que `install.sh` deja la app en `/Applications`.
