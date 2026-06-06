@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=arrow
+GenericName=Claude Code audit viewer
+Comment=Audit which files Claude Code touched, per repo and session, with diffs
+Exec=arrow-gui
+Icon=arrow
+Terminal=false
+Type=Application
+Categories=Development;Utility;RevisionControl;
+Keywords=claude;audit;diff;git;

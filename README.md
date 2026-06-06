@@ -2,8 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
-[![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev/)
+[![egui](https://img.shields.io/badge/egui-0.34-blue)](https://github.com/emilk/egui)
 [![CI](https://github.com/MrArcher23/arrow/actions/workflows/ci.yml/badge.svg)](https://github.com/MrArcher23/arrow/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/MrArcher23/arrow?sort=semver)](https://github.com/MrArcher23/arrow/releases/latest)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black)](#install-linux)
@@ -13,16 +12,14 @@
 *which files did Claude touch, in which repo, with what diff, and in which session?* — without
 opening an IDE, without AI chat, and **without depending on git or hooks**.
 
-> Status: **Phase 2 complete + polish — released on Linux
-> ([v0.1.9](https://github.com/MrArcher23/arrow/releases/latest))**. A desktop app (Tauri 2.x) with
-> the Rust parser as its native backend, **already usable day to day** on Linux (`.deb` + AppImage).
-> Phases 0 (parser/CLI), 1 (web UI) and 2 (packaging) are complete; since then: 20 parser tests, a
-> resilient watcher, zoom, a custom titlebar, active-session focus, live diff-panel refresh,
-> open-in-editor (jump from a diff straight into your editor at the first change), files
-> ordered by most-recent edit (with relative times that age in place via a clock tick), macOS
-> adaptation, and a robust diff-"before" reconstruction (shows a real diff even on Claude Code's
-> `originalFile: null` edits, instead of mislabeling an edited file as new). Phases 3 (honesty + git)
-> and 4 (editing) are pending — details in [ROADMAP.md](ROADMAP.md).
+> Status: **Native rewrite — the desktop app is now a single Rust binary built on
+> [egui/eframe](https://github.com/emilk/egui)** (no webview, no Node/Vite, no WebKitGTK). It
+> replaces the previous Tauri 2.x + Svelte/CodeMirror stack, reusing the same Rust parser library
+> directly (no IPC, no JSON contract — the UI consumes the parser's structs as-is). It keeps the
+> feature set: sidebar `repo → session → files`, a side-by-side diff with syntax highlighting,
+> active-session focus with a live `notify` watcher, open-in-editor, the worktrees inventory +
+> cleanup, themes, zoom, and the release-update check. Phases 3 (honesty + git) and 4 (editing) are
+> still pending — details in [ROADMAP.md](ROADMAP.md).
 
 ## Install (Linux)
 
@@ -144,105 +141,74 @@ Options: `--projects-dir <path>` (defaults to `~/.claude/projects`), `--repo`, `
 `--list`, `--json`, `--check-update`, and `--content --file <path> [--session <id>]` (emits `{before, after}` for a
 file, for the UI's diff view).
 
-## Web UI (Phase 1)
+## Desktop app (egui)
 
-A Vite + Svelte 5 app that consumes the parser through a local dev-server which runs the `arrow`
-binary (in `web/vite.config.ts`). The diff view uses **CodeMirror 6 + `@codemirror/merge`**.
-
-```bash
-cargo build --release          # the dev-server runs target/release/arrow
-cd web && npm install
-npm run dev                     # http://localhost:5173
-```
-
-Layout: a sidebar `repo → session → touched files` (with `+/-` and ⚠ `userModified`), and a central
-panel with the before/after diff of the selected file. Total frontend weight: ~93 KB gzip.
-
-## Desktop app (Phase 2)
-
-The same UI, packaged in **Tauri 2.x**: the Rust parser is the **native backend** (no sidecar, no
-HTTP server). The Svelte UI is reused as-is; only its transport layer (`web/src/lib/api.ts`) detects
-the environment and uses Tauri `invoke()` inside the app or `fetch` in the browser — so `npm run
-dev` keeps working for fast iteration.
+A single native Rust binary built on **egui/eframe** — no webview, no Node/Vite, no WebKitGTK. The
+parser library *is* the backend: the app calls `arrow::build_report` / `arrow::file_content`
+directly, so there is no IPC and no JSON contract between a frontend and a backend.
 
 ```bash
-# system requirements (Linux/Debian/Ubuntu/Pop!_OS), once:
-sudo apt install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
-cargo install tauri-cli --version "^2"     # Tauri CLI
+# Linux build deps (Debian/Ubuntu/Pop!_OS), once — note: no WebKitGTK/Node anymore:
+sudo apt install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+                    libxkbcommon-dev libssl-dev
 
-# development: native window with frontend hot-reload
-cargo tauri dev      # (from the repo root)
-
-# installer: .deb + AppImage in src-tauri/target/release/bundle/
-cargo tauri build
+# run the app (gui/ is its own cargo workspace)
+cargo run --release --manifest-path gui/Cargo.toml
 ```
 
-> **macOS:** the app adapts to the OS on its own (native titlebar with traffic lights + correct font
-> weight). To build the `.app`/`.dmg` — which can only be done on a Mac — see [MACOS.md](MACOS.md).
+- **Single binary, no webview**: the release binary is ~13 MB and self-contained, reading
+  `~/.claude/projects` directly from Rust. It uses **~150 MB of RAM (PSS)** in use (down from
+  ~200 MB on the old Tauri/WebKitGTK build, and a fraction of an Electron client).
+- **Side-by-side diff**: a hand-built diff view (egui has no merge widget) — lines aligned with
+  `similar`, syntax-highlighted with `syntect` (themes/syntaxes bundled by `two-face`), rendered in
+  one virtualized scroll area so both columns scroll together. Created/deleted/unknown files get an
+  honest banner and a single column (a missing "before" is never shown as a new file).
+- **Native live refresh**: a `notify` watcher over `~/.claude/projects` (debounced, resilient) feeds
+  a background worker thread that re-parses off the UI thread; the open diff refreshes in place.
+- **Active-session focus**: the repo(s) of the **active session** (most recent activity) sit at the
+  top, plus any repo touched in the same ~10-min burst; the rest fold into *Other repos*, and an
+  idle launch shows a quiet "No active work" with collapsed history. A **green dot** marks focused
+  repos with recent activity. Honest: "active" = *most recent activity on disk*, not a running process.
+- **Open in editor**: a picker in the file bar opens the selected file at the first changed line by
+  **delegating to the editor's CLI** (the VS Code family, Zed, JetBrains, Sublime, Kate); arrow never
+  embeds an editor. Honest: it opens the **current on-disk file** (disabled when it's gone).
+- **Worktrees inventory + cleanup**: a `Worktrees` button opens an inventory of the git worktrees
+  Claude Code creates per session, flagged **active / stale / merged → safe to remove**, with
+  on-demand disk sizes and a `copy cmd` per row. A **`Clean`/`Prune`** button runs `git worktree
+  remove` **without `--force`** after a dry-run + confirmation — the only action in arrow that mutates
+  disk, offered only on rows git would actually clean. "merged" shows only when provably an ancestor of
+  the (dynamically resolved) default branch; a squash/rebase reads as *can't confirm*. All git shelling
+  stays in `gui/`, so the parser library remains git-free.
+- **Themes, zoom, persistence**: a curated set of themes (egui visuals + a syntect code theme), VS
+  Code-style zoom (`Ctrl +/−/0`), and a version badge with the release-update check. Theme, zoom,
+  remembered editor and sidebar width persist across runs via eframe's on-disk storage.
 
-- **Native backend** (`src-tauri/`): two `invoke` commands — `report()` and `content(file, session)`
-  — that wrap the parser library (`arrow = { path = ".." }`, see Architecture). The AppImage runs
-  standalone, reading `~/.claude/projects` directly from Rust.
-- **Lightweight footprint**: Tauri uses the **system's native webview** (WebKitGTK on Linux), it
-  does not bundle a Chromium like Electron — so the app lives on the order of **~200 MB of RAM (PSS)
-  in use**, a fraction of an equivalent Electron desktop client (which usually runs into several
-  GB). The installer weighs **~77 MB** (AppImage) / **~2 MB** (`.deb`).
-- **Native live refresh**: a `notify` watcher over `~/.claude/projects` emits a `report-changed`
-  event (debounced) and the UI refreshes instantly; a slow polling fallback is kept as a backstop.
-- **Active-session focus**: the repo(s) of the **active session** (the one with the most recent
-  activity) are shown at the top, plus any repo touched in the same burst (~10 min, `BURST_WINDOW`
-  in `web/src/lib/time.ts`); the rest sink into *Other repos* as they age relative to the active
-  one. The **green dot** marks those focused repos with recent activity (the redundant `live` text
-  badge was removed). Honest: "active session" = *most recent activity on disk*, not *a running
-  process* (arrow cannot know the latter).
-- **Open in editor**: a button in the file bar opens the selected file in your own editor at the
-  first changed line. It detects installed editors (the VS Code family — incl. Cursor, Windsurf,
-  Kiro, Antigravity — plus Zed, JetBrains, Sublime, Kate) and **delegates to the editor's CLI**;
-  arrow never embeds an editor or a language server (the mirror image of Claude Code's `/ide`).
-  Honest: it opens the **current on-disk file** (and is disabled when that file is gone), never the
-  reconstructed snapshot.
-- **Worktrees inventory + cleanup**: a `Worktrees` button in the topbar opens an inventory of the git
-  worktrees Claude Code creates per session (under `<repo>/.claude/worktrees/`), grouped by repo and
-  flagged **active / stale (≥10 min no edits) / merged → safe to remove**, with on-demand disk sizes.
-  Each row offers `copy cmd` (the exact `git worktree remove` for *you* to run) and, in the desktop app,
-  a **`Clean`** button that runs it for you — `git worktree remove` **without `--force`** (so git refuses
-  a locked or dirty worktree), gated behind a dry-run and a confirmation. It's the only action in arrow
-  that mutates disk, and it's offered only on rows git would actually clean (merged+clean, or a phantom
-  to prune) — never the main, dirty, locked, or active worktree. Honest by construction: "merged" is
-  shown only when the branch is provably an ancestor of the repo's (dynamically resolved) default branch
-  — a squash/rebase merge reads as *can't confirm*, never a false green; "active" means recent edits on
-  disk, not a running process; sizes are approximate. All git shelling stays in the Tauri backend, so the
-  parser library remains git-free.
-- **Window and zoom**: a custom titlebar (`decorations:false`) with minimize/maximize/close buttons,
-  drag, and double-click to maximize — guaranteeing *cross-distro* controls (on GNOME/Pop!_OS the WM
-  doesn't paint them reliably). VSCode-style UI zoom with `Ctrl +/−/0`: native to the webview
-  (`setZoom`, so it doesn't throw off CodeMirror), persistent across sessions.
-- **Linux/WebKitGTK**: the app sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` in its `main()` (avoids the
-  white screen caused by DMABUF/NVIDIA); the `font-weight` (+100) bug is already compensated in
-  `web/src/app.css` (`font-weight: 350`).
+> **macOS:** eframe creates a real native window; the `.app`/`.dmg` are built in CI (`cargo bundle`),
+> ad-hoc signed and not notarized — see [MACOS.md](MACOS.md).
 
 ### Architecture (shared parser, no duplication)
 
 The parser lives in a **library** (`src/lib.rs`): pure functions `build_report(projects_dir)` and
-`file_content(projects_dir, file, session)` + the serializable structs. Two frontends consume it:
-`src/main.rs` (the CLI, with flags intact) and `src-tauri/` (the desktop backend). Zero duplicated
-logic; the same source of truth for terminal, web, and native app. The parser ships **20 unit tests**
-(`cargo test`) over fixture transcripts in a tempdir, covering the non-obvious parts: defensive
-parsing, top-level transcripts only, grouping by git root, `+/−` counting, filtering of
-`~/.claude/`, recency ordering (repos, sessions, and files within a session), and the diff-"before" reconstruction cascade (inline `originalFile`,
-reverse-applied patches, full-`Read` snapshot, create → new file, and drift → honestly unavailable).
+`file_content(projects_dir, file, session)` + the structs. Two consumers reuse it with zero
+duplicated logic: `src/main.rs` (the CLI, flags intact) and `gui/` (the egui desktop app, via
+`arrow = { path = ".." }`). The parser ships **24 unit tests** (`cargo test`) over fixture
+transcripts in a tempdir — defensive parsing, top-level transcripts only, grouping by git root,
+`+/−` counting, filtering of `~/.claude/`, recency ordering, and the diff-"before" reconstruction
+cascade. `gui/` adds **9 more** (`cargo test` inside it) over the ported time/focus logic and
+the worktrees git plumbing. The parser **never invokes git**; all git/editor shelling lives in
+`gui/src/{editor,worktrees}.rs`.
 
 ## Roadmap
 
 - [x] **Phase 0** — native parser `JSONL → repo/session/file/diff`, terminal output and `--json`.
-- [x] **Phase 1** — local web UI (Vite + Svelte 5) consuming the parser: sidebar
-      `repo → session → files` (Antigravity-style) + per-file diff with
-      **CodeMirror 6 + `@codemirror/merge`**. (Read-only; editing is Phase 4.)
-- [x] **Phase 2** — packaging in **Tauri 2.x** (`.deb` + AppImage). The Rust parser was extracted
-      into a **library** (`src/lib.rs`) and is the native backend (no sidecar); the CLI and the app
-      share it. Dual-mode frontend (`invoke`/`fetch`), a `notify` watcher → `report-changed` event
-      for live refresh, and WebKitGTK mitigation. (The sidebar focus was later refined to
-      "active session + ~10 min burst" with the green dot as the sole indicator; see ROADMAP.)
+- [x] **Phase 1** — local UI consuming the parser: sidebar `repo → session → files` + per-file diff.
+      (Originally a Vite + Svelte 5 web UI with CodeMirror; now native egui — see below.)
+- [x] **Phase 2** — desktop packaging (`.deb` + AppImage + `.dmg`). The Rust parser was extracted
+      into a **library** (`src/lib.rs`) shared by the CLI and the app; a `notify` watcher drives live
+      refresh.
+- [x] **egui rewrite** — replaced the Tauri 2.x + Svelte/CodeMirror stack with a single native egui
+      binary (no webview/Node), reusing the parser's structs directly (no IPC). `web/` and `src-tauri/`
+      were removed.
 - [ ] **Phase 3** — honesty + git: a "git diff working tree" toggle, `userModified` marking, a
       point-in-time timeline reusing `file-history`.
 - [ ] **Phase 4** (deferred) — real editing with save-to-disk, GitHub integration (PRs/commits).
@@ -252,9 +218,8 @@ see [ROADMAP.md](ROADMAP.md). The data contract lives in [SPEC.md](SPEC.md).
 
 ## Stack
 
-Rust (parser/backend) · CodeMirror 6 (UI, Phase 1+) · Tauri 2.x (packaging, Phase 2+).
-On Linux/WebKitGTK you'll need to apply `WEBKIT_DISABLE_DMABUF_RENDERER=1` and compensate for the
-`font-weight` (+100) bug — both documented for Phase 2.
+Rust · [egui/eframe](https://github.com/emilk/egui) (native UI) · `syntect` + `two-face` (syntax
+highlighting) · `similar` (diff) · `notify` (live refresh). No webview, no Node — one binary.
 
 ## Contributing
 

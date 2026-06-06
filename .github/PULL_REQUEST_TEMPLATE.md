@@ -22,7 +22,7 @@
 
 - [ ] `cargo test --release` passes
 - [ ] For parser changes: verified against real `~/.claude` data (e.g. the `/verify-parser` skill, or `./target/release/arrow --list`)
-- [ ] For UI changes: checked in the web dev server (`npm run dev`) and/or the Tauri app (`cargo tauri dev`)
+- [ ] For UI changes: checked in the egui app (`cargo run --manifest-path gui/Cargo.toml`)
 
 <!-- Add any extra detail about your testing here. -->
 

@@ -5,7 +5,18 @@ Archivo de seguimiento entre sesiones. El **roadmap canónico de fases** vive en
 backlog de ideas que aún no están comprometidas a ninguna fase. Las **convenciones** del proyecto
 están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 
-> Última actualización: 2026-06-04 (**Foco "activo vs idle"**: al abrir arrow sin actividad reciente
+> Última actualización: 2026-06-06 (**Migración Tauri → egui**: la app de escritorio se reescribió de
+> Tauri 2.x + Svelte/CodeMirror a un **único binario nativo egui/eframe** (`gui/`, su propia raíz
+> de workspace) — **sin webview, sin Node/Vite, sin WebKitGTK**. Reusa el parser (`src/lib.rs`) **directo**
+> (sin IPC ni JSON: consume los structs `*Out`). Paridad de features: sidebar repo→sesión→archivos, diff
+> side-by-side (alineado con `similar`, highlight con `syntect`+`two-face`, render virtualizado en un solo
+> ScrollArea), foco de sesión activa + watcher `notify`, open-in-editor, inventario de worktrees + Clean,
+> temas (set curado), zoom (`Ctrl ±/0`), version badge + check-update, persistencia vía eframe storage.
+> `editor.rs`/`worktrees.rs` se movieron verbatim a `gui/`. Se **eliminaron `web/` y `src-tauri/`**.
+> Binario release ~13 MB, ~150 MB PSS. Tests: 24 en el parser (raíz) + 9 en `gui/` (`focus`+`worktrees`).
+> Diferido (post-v1, decisión "pragmática"): find-in-diff con regex, colapso de regiones sin cambios, los
+> 14 temas completos. Packaging (`cargo-deb` + AppImage vía linuxdeploy + `cargo-bundle` para .dmg) y los
+> workflows reescritos: pendientes de validar con un tag real. Antes: **Foco "activo vs idle"**: al abrir arrow sin actividad reciente
 > (<20 min) ya no auto-abre ni marca nada como activo — muestra "No active work" + historial colapsado;
 > + banner honesto si se borró el worktree de un archivo; marca **ARROW** en mayúscula; titlebar nativa
 > oscura en macOS. Antes: **Worktrees inventory** read-only: lista/clasifica los worktrees
@@ -19,8 +30,8 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 | Fase | Estado | Notas |
 |---|---|---|
 | 0 — parser/CLI | ✅ | `src/lib.rs` (lib) + `src/main.rs` (CLI). |
-| 1 — UI web (Svelte + CodeMirror) | ✅ | `web/`, dev-server ejecuta el binario. |
-| 2 — empaquetado Tauri 2.x | ✅ | `.deb` + AppImage; backend nativo `src-tauri/`; frontend dual-mode. |
+| 1 — UI | ✅ | Reescrita de Svelte/CodeMirror a **egui nativo** (`gui/`). `web/` eliminado. |
+| 2 — empaquetado | ✅→ | Binario único egui (sin Tauri). `cargo-deb`/AppImage/`.dmg`: pendiente validar tag. `src-tauri/` eliminado. |
 | 3 — honestidad + git | ⏳ pendiente | Ver README. Tiene nota de diseño del badge `live` en SPEC.md. |
 | 4 — edición + GitHub | ⏳ postergado | Ver README. |
 

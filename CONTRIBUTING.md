@@ -15,32 +15,32 @@ By participating, you agree to abide by our
 
 ## Project layout
 
-The Rust parser lives in a **library** so the CLI, the web dev-server, and the
-desktop app all share the same source of truth — zero duplicated logic.
+The Rust parser lives in a **library** so the CLI and the desktop app share the
+same source of truth — zero duplicated logic. The app is native **egui/eframe**
+(no webview, no Node): it consumes the parser's structs directly.
 
 | Path | What it is |
 |---|---|
-| `src/lib.rs` | The parser **library**: pure functions `build_report(projects_dir)` and `file_content(projects_dir, file, session)` plus the serializable structs. This is where the data-model logic lives — read it before touching the parser. |
+| `src/lib.rs` | The parser **library**: pure functions `build_report(projects_dir)` and `file_content(projects_dir, file, session)` plus the structs. This is where the data-model logic lives — read it before touching the parser. |
 | `src/main.rs` | The **CLI** (`arrow`), a thin frontend over the library (`--list`, `--repo`, `--session`, `--json`, `--content`). |
-| `src-tauri/` | The **Tauri 2.x desktop backend**. It wraps the library (two `invoke` commands: `report()` and `content(file, session)`) plus a `notify` file watcher. **It is its own Cargo workspace root** — `cargo build` at the repo root does *not* pull it in. |
-| `web/` | The **Svelte 5 + Vite + CodeMirror 6** UI, reused as-is by both the browser dev-server and the Tauri app. |
-| `web/src/lib/api.ts` | The **isolated fetch layer** (dual-mode): Tauri `invoke()` inside the app, `fetch` in the browser, chosen at runtime. Keep all transport concerns here. |
+| `gui/` | The **egui/eframe desktop app**. It calls the library directly (no IPC, no JSON). **It is its own Cargo workspace root** — `cargo build` at the repo root does *not* pull it in. |
+| `gui/src/{main,sidebar,diff,worktrees_modal}.rs` | The UI: app state + the sidebar tree, the side-by-side diff, and the worktrees modal. |
+| `gui/src/{worker,focus,theme,editor,worktrees,sys}.rs` | The off-thread worker (parsing/IO), ported time/focus logic, themes, and the git/editor shelling (`editor.rs`/`worktrees.rs` — the parser stays git-free). |
 
 The root crate `arrow` is pure Rust (serde, walkdir, clap, anyhow) with **no
-system dependencies**; only the Tauri backend needs the WebKitGTK stack below.
+system dependencies**; only the egui app needs the build libs below.
 
 ## Prerequisites
 
 - **Rust stable** via [rustup](https://rustup.rs/). (If `cargo` isn't on your
   `PATH`, it's usually at `~/.cargo/bin/cargo`.)
-- **Node 22** and **npm**.
 
-To build or run the **desktop app** you additionally need the Tauri toolchain.
-On Linux (Debian/Ubuntu/Pop!\_OS), once:
+To build or run the **desktop app** you additionally need egui/eframe's build
+deps. On Linux (Debian/Ubuntu/Pop!\_OS), once — note: **no WebKitGTK or Node**:
 
 ```bash
-sudo apt install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
-cargo install tauri-cli --version "^2"
+sudo apt install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev \
+                    libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
 ```
 
 ## Build, run, test
@@ -49,7 +49,7 @@ cargo install tauri-cli --version "^2"
 
 ```bash
 cargo build --release          # binary at target/release/arrow
-cargo test --release           # parser unit tests (in src/lib.rs)
+cargo test --release           # parser unit tests (in src/lib.rs, src/update.rs)
 ```
 
 Try the CLI against your own data:
@@ -58,39 +58,25 @@ Try the CLI against your own data:
 ./target/release/arrow --list                  # all repos -> sessions -> files (+/-)
 ./target/release/arrow --repo my-project        # full diff for one repo
 ./target/release/arrow --session 14385fed       # one session by id prefix
-./target/release/arrow --repo my-project --json # normalized JSON (the UI contract)
+./target/release/arrow --repo my-project --json # normalized JSON (the data contract)
 ```
 
-### Web UI (dev)
+### Desktop app (egui)
+
+`gui/` is its own workspace, so run cargo inside it:
 
 ```bash
-cargo build --release          # the dev-server executes target/release/arrow
-cd web && npm install
-npm run dev                    # http://localhost:5173
+cargo run   --manifest-path gui/Cargo.toml            # dev run (native window)
+cargo run   --release --manifest-path gui/Cargo.toml  # release run
+cargo test  --release --manifest-path gui/Cargo.toml  # GUI unit tests
 ```
 
-> **Recompile caveat:** the Vite dev-server (`web/vite.config.ts`) **executes
-> the `target/release/arrow` binary**. After editing `src/lib.rs`, you must run
-> `cargo build --release` again for the UI to see your changes.
-
-Production frontend build:
-
-```bash
-npm --prefix web run build
-```
-
-### Desktop app (Tauri)
-
-Run these **from the repo root**:
-
-```bash
-cargo tauri dev        # native window with frontend hot-reload
-cargo tauri build      # .deb + AppImage in src-tauri/target/release/bundle/
-```
+The app reuses the parser via `arrow = { path = ".." }`; editing `src/lib.rs`
+is picked up automatically on the next `arrow-gui` build.
 
 ## Code style
 
-**Rust**
+**Rust** (run in **both** crates — root and `gui/`):
 
 ```bash
 cargo fmt              # format
@@ -101,17 +87,16 @@ Keep the tree `rustfmt`-clean and clippy-clean — **CI treats clippy warnings a
 errors** (`-D warnings`). Maintainers also have a `/rust-review` Claude Code
 skill (clippy + rustfmt + an arrow-tuned best-practices checklist).
 
-**Web** — follow the existing Svelte/TypeScript style in `web/`.
-
 **Language conventions** (going forward):
 
 - **Code comments in English**, identifiers in English. Legacy Spanish comments
   migrate gradually — there's no need to rewrite them all at once.
 - **All user-visible UI text in English** (labels, states, tooltips, banners) —
-  arrow is an English-branded app. UI strings live in the Svelte components and
-  in `web/src/lib/time.ts`.
-- **Don't couple Svelte components to the transport.** Any change to how data is
-  fetched goes in `web/src/lib/api.ts` only.
+  arrow is an English-branded app. UI strings live in the `gui/src/`
+  modules and in `gui/src/focus.rs` (relative times / date buckets).
+- **Keep IO and git shelling off the parser.** Parsing/disk reads run on the
+  worker thread (`gui/src/worker.rs`); all git/editor shelling lives in
+  `gui/src/{worktrees,editor}.rs`, never in `src/lib.rs`.
 
 ## The honesty principle
 
@@ -195,14 +180,16 @@ admin bypass, but branch + PR is the default for everything non-trivial.)
    same ones CI runs:
 
    ```bash
+   # root crate (parser/CLI)
    cargo fmt --all --check
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test --release
-   npm --prefix web run build
+   # egui app (its own workspace)
+   (cd gui && cargo fmt --all --check && \
+      cargo clippy --all-targets -- -D warnings && cargo test --release)
    ```
 
-   CI uses `npm ci` (the `web/package-lock.json` is committed), Node 22, and Rust
-   stable.
+   CI runs the same two jobs (root crate + `arrow-gui` crate) on Rust stable.
 4. **Open a PR against `main`** and fill out the PR template. Describe what
    changed and, for parser changes, paste the real-data output you verified.
 5. **For non-trivial features, open an issue first** to discuss the approach —
