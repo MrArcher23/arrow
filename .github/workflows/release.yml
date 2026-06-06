@@ -1,120 +1,107 @@
 name: Release
 
 # Triggered by pushing a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`).
-# Builds the desktop bundles with `cargo tauri build` (exactly like locally) and publishes a
-# GitHub Release with the artifacts (.deb + AppImage on Linux, .dmg on macOS) attached.
+# Builds the native (egui) desktop binary and packages it per platform, then publishes a
+# GitHub Release with the artifacts attached (.deb + AppImage on Linux, .dmg on macOS).
 #
-# The build fans out over a platform matrix: one Linux runner and two macOS runners
-# (Apple Silicon + Intel). Each job uploads ITS bundles to the same tag; action-gh-release
-# is idempotent on the tag (creates the Release if missing, appends assets if it exists).
-# Windows runners can be added later the same way.
+# Unlike the old Tauri pipeline this needs NO WebKitGTK and NO Node/Vite — just Rust plus a
+# couple of packaging tools. The build fans out over a platform matrix: one Linux runner and
+# two macOS runners (Apple Silicon + Intel). action-gh-release is idempotent on the tag.
+#
 # Validate this workflow with a real tag push before relying on it for releases.
 on:
   push:
     tags:
       - "v*"
 
-# The release needs write access to create the GitHub Release and upload assets.
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Build bundles (${{ matrix.os }}) and publish
-    # fail-fast: false → a macOS failure must not abort the Linux release (and vice versa).
+    name: Build (${{ matrix.os }}) and publish
     strategy:
       fail-fast: false
       matrix:
         include:
           # Linux: pin to the OLDEST supported Ubuntu (glibc 2.35), NOT ubuntu-latest. glibc is
-          # not forward-compatible: a binary linked against a newer glibc (ubuntu-latest is 24.04
-          # → glibc 2.39) fails at startup on older distros with `version 'GLIBC_2.xx' not found`.
-          # Building on 22.04 lets the .deb/AppImage run on glibc >= 2.35 (Ubuntu 22.04,
-          # Pop!_OS 22.04, Debian 12, …). 22.04 still ships libwebkit2gtk-4.1-dev, which Tauri 2
-          # needs. Do NOT bump this to ubuntu-latest. No `--bundles` flag: it uses the
-          # tauri.conf.json targets (deb, appimage).
+          # not forward-compatible, so building on 22.04 lets the .deb/AppImage run on
+          # glibc >= 2.35 (Ubuntu/Pop!_OS 22.04, Debian 12, Fedora 37+, …).
           - os: ubuntu-22.04
-            bundles: ""
-            artifacts: |
-              src-tauri/target/release/bundle/deb/*.deb
-              src-tauri/target/release/bundle/appimage/*.AppImage
-          # macOS Apple Silicon (arm64). `--bundles app dmg` is REQUIRED: tauri.conf.json declares
-          # only deb/appimage, so without the flag the macOS build would try those and fail. The
-          # flag overrides the config per-build without touching it (zero risk to the Linux build).
-          - os: macos-14
-            bundles: "--bundles app dmg"
-            artifacts: src-tauri/target/release/bundle/dmg/*.dmg
-          # macOS Intel (x64).
-          - os: macos-13
-            bundles: "--bundles app dmg"
-            artifacts: src-tauri/target/release/bundle/dmg/*.dmg
+          # The .dmg suffix must match what install.sh greps for (`_aarch64.dmg` / `_x64.dmg`).
+          - os: macos-14 # Apple Silicon
+            dmg_suffix: aarch64
+          - os: macos-13 # Intel
+            dmg_suffix: x64
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: gui
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Linux-only: macOS ships WKWebView with the OS and needs no apt packages.
+      # Linux build deps for egui/eframe (no WebKitGTK needed anymore).
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libssl-dev
+            libgtk-3-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libssl-dev \
+            file wget
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # No cargo cache here ON PURPOSE. On Linux a shared cache poisons the release: a
-      # `cargo-tauri` binary built on a newer runner (24.04, glibc 2.39) gets restored onto
-      # this pinned 22.04 runner and then fails at `cargo tauri build` with `GLIBC_2.39 not
-      # found` (the cache key doesn't distinguish the Ubuntu version). Releases are infrequent
-      # (tag pushes), so a clean build is the correct, safe trade-off across all platforms.
+      - name: Build the release binary
+        run: cargo build --release
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+      # --- Linux: .deb (cargo-deb) + AppImage (linuxdeploy). ---
+      - name: Package .deb
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-deb --locked
+          cargo deb --no-build -o ../arrow-gui.deb
 
-      - name: Install web dependencies
-        run: npm ci
-        working-directory: web
+      - name: Package AppImage
+        if: runner.os == 'Linux'
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          cp assets/icon.png arrow.png
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            -e target/release/arrow-gui \
+            -d assets/arrow.desktop \
+            -i arrow.png \
+            --output appimage
+          mv arrow*.AppImage ../arrow_amd64.AppImage
 
-      # Build exactly like locally: `cargo tauri build` from the repo root. The Tauri CLI runs
-      # beforeBuildCommand (npm run build) from web/ — the frontend dir it derives from
-      # frontendDist (../web/dist) — so our web/ layout works. We do NOT use tauri-action
-      # because it runs npm from the repo root, where there is no package.json (it lives in web/).
-      # On macOS Tauri ad-hoc signs the .app (no certificate / secrets needed); the .dmg is
-      # NOT notarized, so Gatekeeper warns on first open (documented in README/MACOS.md).
-      - name: Install the Tauri CLI
-        run: cargo install tauri-cli --version "^2" --locked
+      # --- macOS: .app + .dmg (cargo-bundle), ad-hoc signed (not notarized). ---
+      - name: Package .app and .dmg
+        if: runner.os == 'macOS'
+        run: |
+          cargo install cargo-bundle --locked
+          cargo bundle --release
+          APP="target/release/bundle/osx/arrow.app"
+          codesign --force --deep --sign - "$APP" || true
+          hdiutil create -volname "arrow" -srcfolder "$APP" -ov -format UDZO \
+            "../arrow_${{ matrix.dmg_suffix }}.dmg"
 
-      - name: Build the desktop bundles
-        run: cargo tauri build ${{ matrix.bundles }}
-
-      # Each matrix job publishes ITS OWN artifacts to the same tag. action-gh-release is
-      # idempotent on the tag (creates the Release if missing, appends assets if it exists), and
-      # @v2 resolves to a version that handles the concurrent same-tag create race (the 422
-      # "already_exists" path). The body is kept GENERIC on purpose: with fail-fast:false a single
-      # platform can fail while another still publishes, so the notes must not enumerate artifacts
-      # that may not be attached — the actual files are listed in the release's Assets. If this
-      # ever flakes, the robust pattern is a build matrix (upload-artifact) + one dependent publish
-      # job that downloads all artifacts and releases once.
-      - name: Publish the GitHub Release with the bundles
+      - name: Publish the GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: "arrow ${{ github.ref_name }}"
-          body: "Desktop bundles for arrow ${{ github.ref_name }} — see the attached assets (.deb + AppImage on Linux, .dmg on macOS) and the commit history for details."
+          body: "Native (egui) desktop builds for arrow ${{ github.ref_name }} — see the attached assets (.deb + AppImage on Linux, .dmg on macOS)."
           draft: false
           prerelease: false
-          files: ${{ matrix.artifacts }}
+          files: |
+            arrow-gui.deb
+            arrow_amd64.AppImage
+            arrow_*.dmg
