@@ -1,18 +1,20 @@
 ---
-description: Compila el parser de Rust y levanta la UI web de arrow en http://localhost:5173. Úsalo cuando el usuario quiera ejecutar, abrir, levantar o ver la app de arrow.
-allowed-tools: Bash(cargo build*) Bash(~/.cargo/bin/cargo build*) Bash(npm*)
+description: Compila y levanta la app de escritorio nativa (egui) de arrow. Úsalo cuando el usuario quiera ejecutar, abrir, levantar o ver la app de arrow.
+allowed-tools: Bash(cargo build*) Bash(cargo run*) Bash(~/.cargo/bin/cargo build*) Bash(~/.cargo/bin/cargo run*)
 ---
 
-Levanta arrow para verlo en el navegador.
+Levanta la app de escritorio de arrow (egui/eframe, Rust puro — sin webview ni Node).
 
-1. Compila el parser (el dev-server ejecuta `target/release/arrow`):
-   `cargo build --release`  — si `cargo` no está en PATH: `~/.cargo/bin/cargo build --release`.
-2. Si falta `web/node_modules`, instala deps: `npm --prefix web install`.
-3. Levanta el dev-server (déjalo en segundo plano): `npm --prefix web run dev`.
-4. Dile al usuario que abra **http://localhost:5173**.
+1. Corre la app **dentro de `gui/`** (su propia raíz de workspace):
+   `cargo run --manifest-path gui/Cargo.toml`
+   — si `cargo` no está en PATH, usa `~/.cargo/bin/cargo`.
+   (Para release: `cargo run --release --manifest-path gui/Cargo.toml`.)
+2. Se abre una ventana nativa que lee `~/.claude/projects` directamente (sin dev-server ni HTTP).
 
 Notas:
-- Tras cambiar `src/main.rs`, **recompila** (paso 1): el dev-server re-ejecuta el binario en cada
-  request, así que la UI tomará los cambios sin reiniciar el server.
-- El frontend usa HMR: cambios en `web/src/**` se reflejan solos.
-- No tengo navegador para verificar el render visual: pídele al usuario que confirme cómo se ve.
+- En Linux la build necesita las deps de egui/eframe (apt): `libgtk-3-dev libxcb-render0-dev
+  libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev`. Ya **no** se necesita WebKitGTK/Node.
+- La app reusa el parser (`arrow = { path = ".." }`); tras tocar `src/lib.rs` (el parser), recompilar
+  arrow-gui toma los cambios automáticamente (es una dep path).
+- Para ver el render sin pantalla: lanzar en segundo plano y capturar con `grim` (Wayland), luego leer
+  el PNG. Si no, pídele al usuario que confirme cómo se ve.
