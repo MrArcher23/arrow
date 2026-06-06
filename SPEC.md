@@ -1,5 +1,13 @@
 # SPEC — Fase 2: empaquetar arrow en Tauri 2.x
 
+> ⚠️ **HISTÓRICO (2026-06-06).** Esta spec describe la Fase 2 sobre **Tauri**, que **ya no es el
+> stack**: arrow se **migró a una app nativa egui/eframe** (`gui/`, sin webview/Node), y `web/`
+> + `src-tauri/` se eliminaron. Las secciones de **transporte** de abajo (Tauri `invoke`/`fetch`,
+> `web/src/lib/api.ts`, dual-mode) son **obsoletas**: la app egui consume los structs del parser
+> **directo, sin IPC ni JSON**. Lo que **sigue vigente** es el **contrato de datos** (los structs
+> `ReportOut`/`ContentOut`/etc. y la forma del `--json` de la CLI), que egui reutiliza tal cual. Ver
+> [README.md](README.md) y [CLAUDE.md](CLAUDE.md) para el estado actual.
+
 > Spec autocontenido para ejecutar en una **sesión nueva y limpia**. Contexto base: @CLAUDE.md
 > y @README.md. Estado al escribir esto: Fase 0 (parser Rust) y Fase 1 (UI web Svelte) completas
 > y funcionando; todo en `main` y en GitHub (`MrArcher23/arrow`).

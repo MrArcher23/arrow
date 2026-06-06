@@ -69,8 +69,9 @@ body:
       options:
         - .deb package
         - AppImage
-        - Built from source (cargo tauri build / cargo build --release)
-        - Web dev server (npm run dev)
+        - .dmg (macOS)
+        - Built from source (cargo run --manifest-path gui/Cargo.toml)
+        - CLI (target/release/arrow)
         - Other (describe below)
     validations:
       required: true
