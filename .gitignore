@@ -1,9 +1,15 @@
-/target
-web/node_modules
-web/dist
-# Tauri (Fase 2): build nativo + código generado por tauri-build.
-src-tauri/target
-src-tauri/gen
+# Rust build artifacts — parser/CLI at repo root + egui desktop app (gui/)
+/target/
+gui/target/
+
+# Local packaging outputs (CI writes release assets to repo root; linuxdeploy uses gui/)
+*.deb
+*.AppImage
+arrow_*.dmg
+arrow.dmg
+gui/AppDir/
+gui/arrow.png
+gui/linuxdeploy*.AppImage
 
 # Claude Code's per-session git worktrees: transient full checkouts living under
 # the repo, not source. Git still tracks them via .git/worktrees/ metadata (so
