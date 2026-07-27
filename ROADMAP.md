@@ -208,8 +208,13 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
   `last-prompt` distintos, PRs (`pr-link` — si el PR ya mergeó, es la señal de "esta sesión ya
   puede borrarse"), tamaño, `expires in Nd` (retención `cleanupPeriodDays`, default 30), y punto
   **live** por proceso REAL (`/proc/<pid>`; `ps -p` sin procfs — `updatedAt` no se heartbeatea en
-  idle, solo es último recurso). `resumeCwd` = cwd del ÚLTIMO record (reanudes cross-carpeta
-  anclan bien). Filtros All/Live/Expiring/Junk (sin título o <20 KB), búsqueda, pin persistente
+  idle, solo es último recurso). `resumeCwd` = el cwd de la sesión que CODIFICA al nombre del dir
+  del transcript (su dir de registro — el único desde donde `claude --resume` la encuentra;
+  codificar es determinista aunque decodificar sea ambiguo). Fallback honesto: el cwd del último
+  record. Fix 2026-07-27: antes se usaba siempre el último cwd, y una sesión cuyo cwd derivó a un
+  repo ANIDADO (caso real: ~/Plick → ~/Plick/plick-blog-bot) mandaba el resume a una carpeta donde
+  la sesión era invisible; verificado con datos reales, las 57 sesiones anclan a su dir de
+  registro. Filtros All/Live/Expiring/Junk (sin título o <20 KB), búsqueda, pin persistente
   (se salta en bulk-clean y se poda al expirar la sesión), expansor por repo.
 - **Parser**: ahora lista TODAS las sesiones (`fileCount: 0` para solo-chat); Audit las filtra con
   `auditRepos()` y queda idéntica. El report crudo duplica sesiones multi-raíz (Audit lo

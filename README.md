@@ -254,8 +254,11 @@ days), and a **live** dot for sessions a running `claude` process has registered
 the real process (`/proc`, or `ps -p` where procfs doesn't exist), not just a timestamp.
 
 - **Resume anywhere**: copy the session id, or a ready-to-paste
-  `cd '<cwd>' && claude --resume <id>` — anchored to the cwd of the session's **last** record, so a
-  session that moved directories mid-way resumes in the right place. The desktop app can also open
+  `cd '<cwd>' && claude --resume <id>` — anchored to the directory Claude Code **registered** the
+  session under (the session cwd that encodes to its transcript's project-dir name), which is the
+  only place `claude --resume` will actually find it. A cwd that drifts mid-session — say, into a
+  nested repo — no longer sends you somewhere the session is invisible; if no cwd matches, the
+  last record's cwd is the honest fallback. The desktop app can also open
   your terminal straight into the session (`resume` — `$TERMINAL`, gnome-terminal, kitty, and
   friends on Linux; Terminal.app on macOS).
 - **Clean up**: filters for junk (untitled or < 20 KB) and expiring sessions, search across titles
