@@ -22,10 +22,11 @@
 //! Tauri (`src-tauri/`). El comportamiento del parser es idéntico en ambos: la CLI
 //! solo añade filtros (`--repo`/`--session`) y la presentación en terminal.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -81,6 +82,29 @@ pub struct SessionMeta {
     pub last_prompt: Option<String>,
     pub first_ts: Option<String>,
     pub last_ts: Option<String>,
+    /// First HUMAN prompt of the session (a `user` record whose `message.content`
+    /// is a plain string, not `isMeta`/`isCompactSummary`, not starting with "<").
+    /// Title fallback when the session never got an `ai-title`.
+    pub first_user_prompt: Option<String>,
+    /// `cwd` of the LAST record that carried one — covers sessions resumed from a
+    /// different folder than the one their transcript dir encodes.
+    pub resume_cwd: Option<String>,
+    /// Last 2 DISTINCT `last-prompt` values, most recent first, each truncated to
+    /// 200 chars (char boundary, never splits UTF-8).
+    pub last_prompts: Vec<String>,
+    /// `(prNumber, prUrl)` from `pr-link` records, deduped by number, in
+    /// chronological order.
+    pub pr_links: Vec<(u64, String)>,
+    /// Size of the session's `<sessionId>.jsonl` on disk.
+    pub size_bytes: u64,
+}
+
+impl SessionMeta {
+    /// Effective title: last `ai-title` wins; falls back to the first human
+    /// prompt; `None` when neither exists (the UI shows "(no title)").
+    pub fn effective_title(&self) -> Option<&str> {
+        self.title.as_deref().or(self.first_user_prompt.as_deref())
+    }
 }
 
 /// Resultado crudo de recorrer los transcripts: el modelo acumulado más las
@@ -103,6 +127,11 @@ pub struct Collected {
 pub struct ReportOut {
     pub projects_dir: String,
     pub repo_count: usize,
+    /// Claude Code's transcript retention (`cleanupPeriodDays` in
+    /// `<claude root>/settings.json`; defaults to 30 when absent/invalid). The
+    /// claude root is derived as the PARENT of the projects dir, so it follows
+    /// `--projects-dir` overrides.
+    pub retention_days: u32,
     pub repos: Vec<RepoOut>,
 }
 
@@ -118,12 +147,37 @@ pub struct RepoOut {
 #[serde(rename_all = "camelCase")]
 pub struct SessionOut {
     pub session_id: String,
+    /// Last `ai-title`; falls back to the first human prompt; `None` when neither
+    /// exists (the frontend shows "(no title)").
     pub title: Option<String>,
     pub last_prompt: Option<String>,
     pub first_activity: Option<String>,
     pub last_activity: Option<String>,
+    /// Size of the session's `<sessionId>.jsonl` on disk, in bytes.
+    pub size_bytes: u64,
+    /// `cwd` of the LAST record that carried one — where the session actually
+    /// ran last (covers sessions resumed from a different folder).
+    pub resume_cwd: Option<String>,
+    /// Last 2 DISTINCT `last-prompt` values, most recent first, each truncated
+    /// to 200 chars (char boundary, UTF-8 safe).
+    pub last_prompts: Vec<String>,
+    /// PRs linked during the session (`pr-link` records), deduped by number,
+    /// chronological order.
+    pub pr_links: Vec<PrLink>,
+    /// A running Claude Code process currently registers this session in
+    /// `<claude root>/sessions/*.json` (verified against `/proc/<pid>` when
+    /// possible; otherwise a fresh `updatedAt` < 10 min). Best-effort.
+    pub live: bool,
     pub file_count: usize,
     pub files: Vec<FileOut>,
+}
+
+/// A PR linked from a session (from `pr-link` records).
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PrLink {
+    pub number: u64,
+    pub url: String,
 }
 
 #[derive(Serialize)]
@@ -161,6 +215,22 @@ pub struct ContentOut {
     /// For "Open in editor" to jump to the first change. `None` when there are no
     /// hunks (e.g. a `create`). Points at the current on-disk file, not the before.
     pub first_changed_line: Option<i64>,
+}
+
+/// Outcome of [`trash_session`] (or its dry-run preview). `trashed` lists the
+/// absolute paths sent to the system trash — or, on a dry-run, the paths that
+/// WOULD be sent. Nothing in arrow ever `rm -rf`s these.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashOut {
+    /// The FULL session id that was resolved (the caller may pass a prefix).
+    pub session_id: String,
+    /// Preview only; disk untouched.
+    pub dry_run: bool,
+    /// Artifacts located: the transcript `<sessionId>.jsonl`, its sibling
+    /// `<sessionId>/` dir (subagents/workflows), and the session's
+    /// `file-history/` and `session-env/` dirs under the claude root.
+    pub trashed: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +679,23 @@ pub fn collect(
         }
 
         c.jsonl_files += 1;
+        // Transcript identity: the file name IS the sessionId, and the first
+        // relative component is the encoded project dir name (the last-resort
+        // anchor when no record in the session carries a cwd).
+        let sid_from_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        let encoded_dir = path
+            .strip_prefix(projects_path)
+            .ok()
+            .and_then(|r| r.components().next())
+            .and_then(|comp| comp.as_os_str().to_str())
+            .unwrap_or("")
+            .to_string();
+        let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+
         let file = match File::open(path) {
             Ok(f) => f,
             Err(_) => continue,
@@ -634,6 +721,47 @@ pub fn collect(
                 Err(_) => c.lines_skipped += 1, // parsing defensivo: formato no documentado
             }
         }
+
+        // --- every top-level transcript IS a session, edits or not ---
+        // A session used to exist only once an Edit/Write/MultiEdit showed up;
+        // now the `<sessionId>.jsonl` file itself creates it (empty `files`,
+        // fileCount 0), so the Sessions tab can list ALL sessions.
+        if sid_from_name.is_empty() {
+            continue;
+        }
+        if !session_filter
+            .map(|sf| sid_from_name.starts_with(sf))
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        let resume_cwd = {
+            let meta = c.metas.entry(sid_from_name.clone()).or_default();
+            meta.size_bytes = size_bytes;
+            meta.resume_cwd.clone()
+        };
+        let already_listed = c
+            .repos
+            .values()
+            .any(|r| r.sessions.contains_key(&sid_from_name));
+        if !already_listed {
+            // Anchor: git root of the LAST cwd seen (covers sessions resumed
+            // from another folder — their records' cwd differs from the encoded
+            // dir name); a non-git cwd anchors as-is (git_root returns it);
+            // with no cwd in any record, best-effort decode of the dir name.
+            let anchor = match &resume_cwd {
+                Some(cwd) => git_root(cwd, &mut roots),
+                None => decode_project_dir(&encoded_dir),
+            };
+            if repo_filter.map(|rf| anchor.contains(rf)).unwrap_or(true) {
+                c.repos
+                    .entry(anchor)
+                    .or_default()
+                    .sessions
+                    .entry(sid_from_name)
+                    .or_default();
+            }
+        }
     }
 
     c
@@ -656,16 +784,71 @@ fn ingest(
         if pass {
             match v.get("type").and_then(Value::as_str) {
                 Some("ai-title") => {
+                    // Overwrite on every record: the LAST ai-title wins.
                     if let Some(t) = v.get("aiTitle").and_then(Value::as_str) {
                         metas.entry(sid.to_string()).or_default().title = Some(t.to_string());
                     }
                 }
                 Some("last-prompt") => {
                     if let Some(p) = v.get("lastPrompt").and_then(Value::as_str) {
-                        metas.entry(sid.to_string()).or_default().last_prompt = Some(p.to_string());
+                        let e = metas.entry(sid.to_string()).or_default();
+                        e.last_prompt = Some(p.to_string());
+                        // Keep the last 2 DISTINCT prompts, most recent first.
+                        // Compared/stored truncated to 200 chars (char boundary,
+                        // so a multi-byte prompt never gets split mid-UTF-8).
+                        let t = truncate_chars(p, 200);
+                        if e.last_prompts.first() != Some(&t) {
+                            e.last_prompts.insert(0, t);
+                            e.last_prompts.truncate(2);
+                        }
+                    }
+                }
+                Some("pr-link") => {
+                    // PR created/linked during the session. Claude Code re-emits
+                    // the same PR on later turns → dedupe by number, keep the
+                    // first occurrence (chronological order).
+                    if let (Some(n), Some(u)) = (
+                        v.get("prNumber").and_then(Value::as_u64),
+                        v.get("prUrl").and_then(Value::as_str),
+                    ) {
+                        let e = metas.entry(sid.to_string()).or_default();
+                        if !e.pr_links.iter().any(|(num, _)| *num == n) {
+                            e.pr_links.push((n, u.to_string()));
+                        }
+                    }
+                }
+                Some("user") => {
+                    // Title fallback: the FIRST human prompt — a plain-string
+                    // content that isn't meta bookkeeping (`isMeta`, compact
+                    // summaries) and doesn't start with "<" (slash-command XML).
+                    let is_meta = v.get("isMeta").and_then(Value::as_bool).unwrap_or(false)
+                        || v.get("isCompactSummary")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                    if !is_meta {
+                        if let Some(text) = v
+                            .get("message")
+                            .and_then(|m| m.get("content"))
+                            .and_then(Value::as_str)
+                        {
+                            let t = text.trim();
+                            if !t.is_empty() && !t.starts_with('<') {
+                                let e = metas.entry(sid.to_string()).or_default();
+                                if e.first_user_prompt.is_none() {
+                                    e.first_user_prompt = Some(truncate_chars(t, 200));
+                                }
+                            }
+                        }
                     }
                 }
                 _ => {}
+            }
+            // Last cwd seen wins: where the session actually ran last (a resumed
+            // session's later records carry the new folder).
+            if let Some(cwd) = v.get("cwd").and_then(Value::as_str) {
+                if !cwd.is_empty() {
+                    metas.entry(sid.to_string()).or_default().resume_cwd = Some(cwd.to_string());
+                }
             }
             if let Some(ts) = v.get("timestamp").and_then(Value::as_str) {
                 let e = metas.entry(sid.to_string()).or_default();
@@ -769,6 +952,22 @@ pub fn build_report_from(
     repos: &BTreeMap<String, Repo>,
     metas: &BTreeMap<String, SessionMeta>,
 ) -> ReportOut {
+    // Claude root = PARENT of the projects dir (follows --projects-dir).
+    // `sessions/` (live processes) and `settings.json` (retention) are read
+    // ONCE per build here — never per session.
+    let claude_root = Path::new(projects_dir)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf);
+    let live = claude_root
+        .as_deref()
+        .map(live_sessions)
+        .unwrap_or_default();
+    let retention_days = claude_root
+        .as_deref()
+        .map(read_retention_days)
+        .unwrap_or(30);
+
     let mut repos_out: Vec<RepoOut> = repos
         .iter()
         .map(|(cwd, repo)| {
@@ -802,10 +1001,25 @@ pub fn build_report_from(
                     });
                     SessionOut {
                         session_id: sid.clone(),
-                        title: m.and_then(|m| m.title.clone()),
+                        title: m.and_then(|m| m.effective_title().map(str::to_string)),
                         last_prompt: m.and_then(|m| m.last_prompt.clone()),
                         first_activity: m.and_then(|m| m.first_ts.clone()),
                         last_activity: m.and_then(|m| m.last_ts.clone()),
+                        size_bytes: m.map(|m| m.size_bytes).unwrap_or(0),
+                        resume_cwd: m.and_then(|m| m.resume_cwd.clone()),
+                        last_prompts: m.map(|m| m.last_prompts.clone()).unwrap_or_default(),
+                        pr_links: m
+                            .map(|m| {
+                                m.pr_links
+                                    .iter()
+                                    .map(|(n, u)| PrLink {
+                                        number: *n,
+                                        url: u.clone(),
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        live: live.contains(sid),
                         file_count: files.len(),
                         files,
                     }
@@ -831,6 +1045,7 @@ pub fn build_report_from(
     ReportOut {
         projects_dir: projects_dir.to_string(),
         repo_count: repos_out.len(),
+        retention_days,
         repos: repos_out,
     }
 }
@@ -886,6 +1101,288 @@ fn worktree_main_root(dot_git_file: &Path) -> Option<String> {
         return None;
     }
     Some(main.to_string())
+}
+
+/// Truncates to `max` CHARACTERS (a char boundary, never a byte offset — so a
+/// multi-byte UTF-8 sequence is never split).
+fn truncate_chars(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
+/// Best-effort decode of an encoded project dir name ("-home-user-proj" →
+/// "/home/user/proj"). Ambiguous by design — a real "-" in a folder name is
+/// indistinguishable from the separator — so it's only the LAST-RESORT anchor,
+/// used when no record in the session carried a cwd.
+fn decode_project_dir(name: &str) -> String {
+    let decoded = name.trim_start_matches('-').replace('-', "/");
+    format!("/{decoded}")
+}
+
+/// Session ids registered by RUNNING Claude Code processes, read from
+/// `<claude root>/sessions/*.json` ({pid, sessionId, updatedAt, ...}) in ONE
+/// pass. A session counts as live when its process is verifiably alive
+/// (`/proc/<pid>` exists, on systems that have /proc) or — when that can't be
+/// checked — when its `updatedAt` is fresher than 10 minutes. Best-effort:
+/// a stale registry file whose pid got recycled could false-positive.
+fn live_sessions(claude_root: &Path) -> HashSet<String> {
+    let mut live = HashSet::new();
+    let entries = match std::fs::read_dir(claude_root.join("sessions")) {
+        Ok(e) => e,
+        Err(_) => return live, // no registry dir: nothing is live
+    };
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map(|e| e == "json").unwrap_or(false) {
+            // Defensive: an unreadable/malformed registry file is skipped.
+            let v: Value = match std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+            {
+                Some(v) => v,
+                None => continue,
+            };
+            let sid = match v.get("sessionId").and_then(Value::as_str) {
+                Some(s) if !s.is_empty() => s,
+                _ => continue,
+            };
+            let pid = v.get("pid").and_then(Value::as_u64);
+            let updated_ms = v.get("updatedAt").and_then(Value::as_u64);
+            if session_process_alive(pid, updated_ms, now_ms) {
+                live.insert(sid.to_string());
+            }
+        }
+    }
+    live
+}
+
+/// Is the registered process alive? `/proc/<pid>` when /proc exists (Linux);
+/// without procfs (macOS) ask `ps -p <pid>` (argv-direct, the same shell-out
+/// pattern as gio/curl). Only when the pid can't be checked at all fall back to
+/// "updatedAt is fresher than 10 minutes" — Claude Code does NOT heartbeat
+/// updatedAt while a session sits idle, so that fallback alone would call a
+/// running-but-idle session dead (and let `trash_session` delete it).
+fn session_process_alive(pid: Option<u64>, updated_ms: Option<u64>, now_ms: u64) -> bool {
+    if let Some(pid) = pid {
+        if Path::new("/proc").is_dir() {
+            return Path::new(&format!("/proc/{pid}")).exists();
+        }
+        if let Ok(status) = std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "pid="])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+        {
+            return status.success();
+        }
+    }
+    const TEN_MIN_MS: u64 = 10 * 60 * 1000;
+    updated_ms
+        .map(|u| now_ms.saturating_sub(u) < TEN_MIN_MS)
+        .unwrap_or(false)
+}
+
+/// Claude Code's transcript retention: `cleanupPeriodDays` from
+/// `<claude root>/settings.json`. Defensive: a missing file, invalid JSON, or a
+/// null/non-numeric value all yield the documented default of 30.
+fn read_retention_days(claude_root: &Path) -> u32 {
+    std::fs::read_to_string(claude_root.join("settings.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.get("cleanupPeriodDays").and_then(Value::as_u64))
+        .map(|d| d.min(u32::MAX as u64) as u32)
+        .unwrap_or(30)
+}
+
+// ---------------------------------------------------------------------------
+// Trash (the lib's ONLY disk mutation — and a reversible one)
+// ---------------------------------------------------------------------------
+
+/// Sends ALL of a session's artifacts to the system trash (never `rm -rf`):
+/// the transcript `<sessionId>.jsonl` (searched across every `projects/<dir>/`),
+/// its sibling `<sessionId>/` dir (subagents/workflows), and the session's
+/// `file-history/<sessionId>/` and `session-env/<sessionId>/` dirs under the
+/// claude root (= parent of `projects_dir`).
+///
+/// `session_id` may be a prefix, but it must resolve to exactly ONE session
+/// (ambiguity is an error — this deletes things). REFUSES to touch a session a
+/// running Claude Code process has registered (see [`live_sessions`]).
+///
+/// With `execute == false` this is a DRY-RUN: it only locates and returns the
+/// paths, touching nothing. With `execute == true` it shells out to the
+/// platform trash (`gio trash` on Linux; a move into `~/.Trash` on macOS,
+/// suffixing on name collisions). If the trash tool is missing or fails, the
+/// call returns an error WITHOUT falling back to any destructive delete.
+pub fn trash_session(
+    projects_dir: &str,
+    session_id: &str,
+    execute: bool,
+) -> anyhow::Result<TrashOut> {
+    anyhow::ensure!(!session_id.is_empty(), "empty session id");
+    // A session id (or prefix) is only ever alphanumeric plus dashes. Rejecting
+    // anything else up front (dots, path separators, globs…) guarantees the
+    // artifact paths built below can never escape their intended directories
+    // (`--trash-session ..` must not resolve to the whole claude root).
+    anyhow::ensure!(
+        session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-'),
+        "invalid session id '{session_id}' — expected letters, digits and dashes only"
+    );
+    let projects_path = Path::new(projects_dir);
+
+    // (a) Locate the transcript(s): top-level `<dir>/<sessionId>.jsonl` only,
+    // same rule as the report (nested subagent transcripts are not sessions).
+    let mut matched: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+    for entry in WalkDir::new(projects_path)
+        .min_depth(2)
+        .max_depth(2)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        // Transcripts are FILES; a directory named `x.jsonl` is not a session.
+        if !path.is_file() || !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+            continue;
+        }
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        // Same charset rule as the input id: a stem like `..` (from a planted
+        // `...jsonl`) must never become a trash target.
+        if stem.is_empty() || !stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            continue;
+        }
+        if stem.starts_with(session_id) {
+            matched
+                .entry(stem.to_string())
+                .or_default()
+                .push(path.to_path_buf());
+        }
+    }
+    if matched.is_empty() {
+        anyhow::bail!("session '{session_id}' not found under {projects_dir} — nothing to trash");
+    }
+    if matched.len() > 1 {
+        // Char-based truncation (a byte slice could split a UTF-8 boundary).
+        let ids: Vec<String> = matched
+            .keys()
+            .map(|s| s.chars().take(8).collect())
+            .collect();
+        anyhow::bail!(
+            "'{session_id}' is ambiguous — it matches {} sessions ({}…); pass a longer prefix",
+            matched.len(),
+            ids.join(", ")
+        );
+    }
+    let (sid, transcripts) = matched.into_iter().next().expect("checked non-empty");
+
+    // (b) Refuse a live session (a running process still writes these files).
+    // Canonicalize first so a relative `--projects-dir` still yields the claude
+    // root (its parent) and this guard is never skipped silently.
+    let canonical =
+        std::fs::canonicalize(projects_path).unwrap_or_else(|_| projects_path.to_path_buf());
+    let claude_root = canonical
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf);
+    if let Some(root) = &claude_root {
+        if live_sessions(root).contains(&sid) {
+            anyhow::bail!(
+                "session {sid} is live (a running Claude Code process has it registered in \
+                 {}/sessions) — refusing to trash it",
+                root.display()
+            );
+        }
+    }
+
+    // (c) Gather every existing artifact.
+    let mut targets: Vec<PathBuf> = Vec::new();
+    for jsonl in &transcripts {
+        targets.push(jsonl.clone());
+        // Sibling `<sessionId>/` dir: subagents/ and workflows/.
+        if let Some(dir) = jsonl.parent().map(|d| d.join(&sid)) {
+            if dir.is_dir() {
+                targets.push(dir);
+            }
+        }
+    }
+    if let Some(root) = &claude_root {
+        for sub in ["file-history", "session-env"] {
+            let p = root.join(sub).join(&sid);
+            if p.exists() {
+                targets.push(p);
+            }
+        }
+    }
+
+    // (d) Dry-run returns the located paths untouched; execute trashes them.
+    if execute {
+        send_to_trash(&targets)?;
+    }
+    Ok(TrashOut {
+        session_id: sid,
+        dry_run: !execute,
+        trashed: targets
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
+    })
+}
+
+/// Linux (and other non-mac unixes): `gio trash -- <paths…>` — the freedesktop
+/// trash, recoverable from the file manager. Same shell-out pattern as
+/// `update.rs`/curl: argv-direct, no shell. A missing gio or a non-zero exit is
+/// an ERROR — there is deliberately no `rm -rf` fallback.
+#[cfg(not(target_os = "macos"))]
+fn send_to_trash(paths: &[PathBuf]) -> anyhow::Result<()> {
+    let out = std::process::Command::new("gio")
+        .arg("trash")
+        .arg("--")
+        .args(paths)
+        .output()
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "couldn't run `gio trash` ({e}) — nothing was deleted; install gio (glib2) \
+                 or trash the paths manually"
+            )
+        })?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "`gio trash` failed: {} — arrow never falls back to a destructive delete",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// macOS: move into `~/.Trash/` (same volume as `~/.claude`, so a plain rename
+/// works), suffixing the name if it collides with something already trashed.
+#[cfg(target_os = "macos")]
+fn send_to_trash(paths: &[PathBuf]) -> anyhow::Result<()> {
+    let home =
+        std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set — nothing was deleted"))?;
+    let trash = Path::new(&home).join(".Trash");
+    anyhow::ensure!(
+        trash.is_dir(),
+        "~/.Trash not found — nothing was deleted; trash the paths manually"
+    );
+    for p in paths {
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| anyhow::anyhow!("unnameable path {} — nothing moved", p.display()))?;
+        let mut dest = trash.join(name);
+        let mut n = 1u32;
+        while dest.exists() {
+            dest = trash.join(format!("{name} {n}"));
+            n += 1;
+        }
+        std::fs::rename(p, &dest)
+            .map_err(|e| anyhow::anyhow!("couldn't move {} to the Trash: {e}", p.display()))?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1792,5 +2289,396 @@ mod tests {
             "sin sesión, gana la edición más reciente (sessNew), sin mezclar"
         );
         assert_eq!(out.ops, 1, "solo cuenta las ops de la sesión elegida");
+    }
+
+    // ------------------------------------------------------------------
+    // Sessions tab: sesiones sin ediciones, metadatos nuevos, retención,
+    // live y borrado a papelera (dry-run).
+    // ------------------------------------------------------------------
+
+    // Plain user record (a human prompt), with cwd + timestamp.
+    fn user_record(sid: &str, cwd: &str, ts: &str, content: &str) -> String {
+        json!({
+            "type": "user", "sessionId": sid, "cwd": cwd, "timestamp": ts,
+            "message": { "role": "user", "content": content }
+        })
+        .to_string()
+    }
+
+    fn last_prompt_record(sid: &str, prompt: &str) -> String {
+        json!({ "type": "last-prompt", "sessionId": sid, "lastPrompt": prompt, "leafUuid": "x" })
+            .to_string()
+    }
+
+    fn pr_link_record(sid: &str, number: u64, url: &str, ts: &str) -> String {
+        json!({
+            "type": "pr-link", "sessionId": sid, "prNumber": number, "prUrl": url,
+            "prRepository": "owner/repo", "timestamp": ts
+        })
+        .to_string()
+    }
+
+    // Nested layout `<tmp>/claude/projects` so the claude root (parent of the
+    // projects dir) is OURS — live/retention tests never touch the real one.
+    fn claude_layout(tag: &str) -> (PathBuf, PathBuf) {
+        let root = tmpdir(tag);
+        let claude = root.join("claude");
+        let projects = claude.join("projects");
+        fs::create_dir_all(&projects).unwrap();
+        (claude, projects)
+    }
+
+    #[test]
+    fn sesion_sin_ediciones_se_lista_con_titulo_de_ai_title() {
+        // Un transcript SIN Edit/Write/MultiEdit debe existir igual como sesión
+        // (files vacío, fileCount 0), anclado a la raíz git de su cwd.
+        let dir = tmpdir("no_edits");
+        let repo = dir.join("myrepo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let recs = vec![
+            json!({ "type": "ai-title", "sessionId": "s1", "aiTitle": "Investigar el bug" })
+                .to_string(),
+            user_record(
+                "s1",
+                repo.to_str().unwrap(),
+                "2026-06-02T00:00:00Z",
+                "hola, mira este error",
+            ),
+        ];
+        write_top_level(&dir, "proj", "s1", &recs);
+
+        let report = build_report(dir.to_str().unwrap());
+        assert_eq!(report.repo_count, 1);
+        assert_eq!(
+            report.repos[0].cwd,
+            repo.to_string_lossy(),
+            "la sesión sin ediciones se agrupa por la raíz git de su cwd"
+        );
+        let s = &report.repos[0].sessions[0];
+        assert_eq!(s.session_id, "s1");
+        assert_eq!(s.title.as_deref(), Some("Investigar el bug"));
+        assert_eq!(s.file_count, 0);
+        assert!(s.files.is_empty());
+        assert!(s.size_bytes > 0, "sizeBytes = tamaño del .jsonl");
+        assert!(!s.live);
+    }
+
+    #[test]
+    fn titulo_fallback_al_primer_prompt_humano() {
+        // Sin ai-title: el título cae al PRIMER user con content string que no
+        // sea isMeta/isCompactSummary ni empiece con "<" (XML de slash-commands).
+        let dir = tmpdir("title_fallback");
+        let repo = dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let cwd = repo.to_str().unwrap();
+        let recs = vec![
+            // isMeta: se ignora como prompt humano.
+            json!({
+                "type": "user", "sessionId": "s1", "cwd": cwd, "isMeta": true,
+                "timestamp": "2026-06-02T00:00:00Z",
+                "message": { "role": "user", "content": "caveat interno" }
+            })
+            .to_string(),
+            // Empieza con "<": salida de slash-command, no un prompt humano.
+            user_record(
+                "s1",
+                cwd,
+                "2026-06-02T00:00:01Z",
+                "<command-name>/model</command-name>",
+            ),
+            // Contenido array (tool results): no es string, se ignora.
+            json!({
+                "type": "user", "sessionId": "s1", "cwd": cwd,
+                "timestamp": "2026-06-02T00:00:02Z",
+                "message": { "role": "user", "content": [{ "type": "tool_result" }] }
+            })
+            .to_string(),
+            // El primer prompt humano real: ESTE es el título.
+            user_record("s1", cwd, "2026-06-02T00:00:03Z", "Arregla el bug de login"),
+            user_record("s1", cwd, "2026-06-02T00:00:04Z", "otro prompt posterior"),
+        ];
+        write_top_level(&dir, "proj", "s1", &recs);
+
+        let report = build_report(dir.to_str().unwrap());
+        let s = &report.repos[0].sessions[0];
+        assert_eq!(s.title.as_deref(), Some("Arregla el bug de login"));
+    }
+
+    #[test]
+    fn resume_cwd_es_el_ultimo_cwd_y_ancla_el_repo() {
+        // Caso real 081c7c8f: transcript guardado bajo la carpeta A pero
+        // reanudado desde B — el ÚLTIMO cwd gana y ancla la agrupación.
+        let dir = tmpdir("resume_cwd");
+        let repo_a = dir.join("repoA");
+        let repo_b = dir.join("repoB");
+        fs::create_dir_all(repo_a.join(".git")).unwrap();
+        fs::create_dir_all(repo_b.join(".git")).unwrap();
+        let recs = vec![
+            user_record(
+                "s1",
+                repo_a.to_str().unwrap(),
+                "2026-06-02T00:00:00Z",
+                "empezamos aquí",
+            ),
+            user_record(
+                "s1",
+                repo_b.to_str().unwrap(),
+                "2026-06-02T00:01:00Z",
+                "seguimos en otra carpeta",
+            ),
+        ];
+        write_top_level(&dir, "proj", "s1", &recs);
+
+        let report = build_report(dir.to_str().unwrap());
+        assert_eq!(report.repo_count, 1, "una sesión vive en UN repo");
+        assert_eq!(
+            report.repos[0].cwd,
+            repo_b.to_string_lossy(),
+            "el anclaje usa el ÚLTIMO cwd (sesión reanudada)"
+        );
+        let s = &report.repos[0].sessions[0];
+        assert_eq!(s.resume_cwd.as_deref(), repo_b.to_str());
+    }
+
+    #[test]
+    fn last_prompts_ultimos_dos_distintos_truncados() {
+        let dir = tmpdir("last_prompts");
+        // 300 chars multibyte (á = 2 bytes): el truncado es por CHAR, no por byte.
+        let long = "á".repeat(300);
+        let recs = vec![
+            last_prompt_record("s1", "primer prompt"),
+            last_prompt_record("s1", "segundo prompt"),
+            last_prompt_record("s1", "segundo prompt"), // repetido: no duplica
+            last_prompt_record("s1", &long),
+        ];
+        write_top_level(&dir, "proj", "s1", &recs);
+
+        let report = build_report(dir.to_str().unwrap());
+        let s = &report.repos[0].sessions[0];
+        assert_eq!(s.last_prompts.len(), 2, "solo los últimos 2 DISTINTOS");
+        assert_eq!(
+            s.last_prompts[0].chars().count(),
+            200,
+            "truncado a 200 chars (límite de char, no de byte)"
+        );
+        assert!(s.last_prompts[0].chars().all(|c| c == 'á'));
+        assert_eq!(s.last_prompts[1], "segundo prompt");
+    }
+
+    #[test]
+    fn pr_links_se_deduplican_por_numero() {
+        let dir = tmpdir("pr_links");
+        let recs = vec![
+            pr_link_record(
+                "s1",
+                360,
+                "https://github.com/o/r/pull/360",
+                "2026-07-02T00:00:00Z",
+            ),
+            // Claude Code re-emite el mismo PR en turnos posteriores.
+            pr_link_record(
+                "s1",
+                360,
+                "https://github.com/o/r/pull/360",
+                "2026-07-02T00:01:00Z",
+            ),
+            pr_link_record(
+                "s1",
+                361,
+                "https://github.com/o/r/pull/361",
+                "2026-07-02T00:02:00Z",
+            ),
+        ];
+        write_top_level(&dir, "proj", "s1", &recs);
+
+        let report = build_report(dir.to_str().unwrap());
+        let s = &report.repos[0].sessions[0];
+        assert_eq!(s.pr_links.len(), 2, "deduplicado por número");
+        assert_eq!(s.pr_links[0].number, 360, "orden cronológico");
+        assert_eq!(s.pr_links[1].number, 361);
+        assert_eq!(s.pr_links[1].url, "https://github.com/o/r/pull/361");
+    }
+
+    #[test]
+    fn retention_days_default_y_desde_settings() {
+        let (claude, projects) = claude_layout("retention");
+        let pd = projects.to_str().unwrap();
+
+        // Sin settings.json → default 30.
+        assert_eq!(build_report(pd).retention_days, 30);
+        // cleanupPeriodDays null (así viene en instalaciones reales) → 30.
+        fs::write(
+            claude.join("settings.json"),
+            r#"{"cleanupPeriodDays":null}"#,
+        )
+        .unwrap();
+        assert_eq!(build_report(pd).retention_days, 30);
+        // JSON roto → 30 (parsing defensivo).
+        fs::write(claude.join("settings.json"), "{ rota").unwrap();
+        assert_eq!(build_report(pd).retention_days, 30);
+        // Valor real → se respeta.
+        fs::write(claude.join("settings.json"), r#"{"cleanupPeriodDays":7}"#).unwrap();
+        assert_eq!(build_report(pd).retention_days, 7);
+    }
+
+    #[test]
+    fn trash_session_dry_run_localiza_artefactos_sin_borrar() {
+        let (claude, projects) = claude_layout("trash_dry");
+        let proj = projects.join("proj");
+        fs::create_dir_all(&proj).unwrap();
+        // Los 4 artefactos de la sesión "abc123".
+        let jsonl = proj.join("abc123.jsonl");
+        fs::write(&jsonl, "{}\n").unwrap();
+        let sibling = proj.join("abc123");
+        fs::create_dir_all(sibling.join("subagents")).unwrap();
+        let fh = claude.join("file-history").join("abc123");
+        fs::create_dir_all(&fh).unwrap();
+        let se = claude.join("session-env").join("abc123");
+        fs::create_dir_all(&se).unwrap();
+        let pd = projects.to_str().unwrap();
+
+        let out = trash_session(pd, "abc123", false).unwrap();
+        assert!(out.dry_run);
+        assert_eq!(out.session_id, "abc123");
+        assert_eq!(out.trashed.len(), 4, "los 4 artefactos localizados");
+        for p in [&jsonl, &sibling, &fh, &se] {
+            let ps = p.to_string_lossy();
+            assert!(
+                out.trashed.iter().any(|t| t == ps.as_ref()),
+                "falta {ps} en {:?}",
+                out.trashed
+            );
+            assert!(p.exists(), "dry-run NO borra nada: {ps}");
+        }
+
+        // Un prefijo único también resuelve.
+        let out2 = trash_session(pd, "abc", false).unwrap();
+        assert_eq!(out2.session_id, "abc123");
+
+        // Sesión inexistente → error claro, nada tocado.
+        assert!(trash_session(pd, "zzz", false).is_err());
+
+        // Prefijo ambiguo → error (borrar exige resolución única).
+        fs::write(proj.join("abd999.jsonl"), "{}\n").unwrap();
+        assert!(trash_session(pd, "ab", false).is_err());
+    }
+
+    #[test]
+    fn trash_session_rejects_ids_that_could_escape() {
+        let (_claude, projects) = claude_layout("trash_escape");
+        let proj = projects.join("proj");
+        fs::create_dir_all(&proj).unwrap();
+        fs::write(proj.join("abc123.jsonl"), "{}\n").unwrap();
+        // A planted `...jsonl` (stem `..`) tries to turn the artifact paths
+        // into `projects/..` and friends; the charset rule kills it up front.
+        fs::write(proj.join("...jsonl"), "{}\n").unwrap();
+        let pd = projects.to_str().unwrap();
+        for bad in ["..", ".", "a/b", "abc123/", "a.b", "*"] {
+            let err = trash_session(pd, bad, false).expect_err(bad);
+            assert!(
+                err.to_string().contains("invalid session id"),
+                "{bad}: {err}"
+            );
+        }
+        // The planted file is also invisible to prefix resolution: `abc123`
+        // still resolves uniquely, and only to its own artifacts.
+        let out = trash_session(pd, "abc123", false).unwrap();
+        assert!(out.trashed.iter().all(|t| !t.ends_with("..")));
+    }
+
+    #[test]
+    fn trash_session_ignores_a_directory_named_like_a_transcript() {
+        let (_claude, projects) = claude_layout("trash_dirjsonl");
+        let proj = projects.join("proj");
+        fs::create_dir_all(proj.join("fakedir1.jsonl")).unwrap();
+        let err = trash_session(projects.to_str().unwrap(), "fakedir1", false)
+            .expect_err("a directory is not a transcript");
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn trash_session_rehusa_sesion_live() {
+        let (claude, projects) = claude_layout("trash_live");
+        let proj = projects.join("proj");
+        fs::create_dir_all(&proj).unwrap();
+        fs::write(proj.join("lively99.jsonl"), "{}\n").unwrap();
+        // Registro de proceso vivo: NUESTRO propio pid (existe en /proc) y un
+        // updatedAt fresco (fallback en plataformas sin /proc).
+        let sessions = claude.join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        fs::write(
+            sessions.join("1234.json"),
+            json!({ "pid": std::process::id(), "sessionId": "lively99", "updatedAt": now_ms })
+                .to_string(),
+        )
+        .unwrap();
+
+        let err = trash_session(projects.to_str().unwrap(), "lively99", false)
+            .expect_err("una sesión live debe rehusarse");
+        assert!(
+            err.to_string().contains("live"),
+            "el error explica que la sesión está live: {err}"
+        );
+        assert!(proj.join("lively99.jsonl").exists());
+    }
+
+    #[test]
+    fn sesion_live_se_marca_en_el_report() {
+        let (claude, projects) = claude_layout("live_flag");
+        let proj = projects.join("proj");
+        fs::create_dir_all(&proj).unwrap();
+        fs::write(proj.join("lively99.jsonl"), "").unwrap();
+        fs::write(proj.join("deadses99.jsonl"), "").unwrap();
+        let sessions = claude.join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        // Vivo: nuestro pid + updatedAt fresco.
+        fs::write(
+            sessions.join("1.json"),
+            json!({ "pid": std::process::id(), "sessionId": "lively99", "updatedAt": now_ms })
+                .to_string(),
+        )
+        .unwrap();
+        // Muerto: pid imposible + updatedAt viejo.
+        fs::write(
+            sessions.join("2.json"),
+            json!({ "pid": 999_999_999u64, "sessionId": "deadses99", "updatedAt": 0 }).to_string(),
+        )
+        .unwrap();
+
+        let report = build_report(projects.to_str().unwrap());
+        let all: Vec<&SessionOut> = report
+            .repos
+            .iter()
+            .flat_map(|r| r.sessions.iter())
+            .collect();
+        let lively = all.iter().find(|s| s.session_id == "lively99").unwrap();
+        let dead = all.iter().find(|s| s.session_id == "deadses99").unwrap();
+        assert!(lively.live, "proceso registrado y vivo ⇒ live");
+        assert!(
+            !dead.live,
+            "registro con pid muerto/updatedAt viejo ⇒ no live"
+        );
+    }
+
+    #[test]
+    fn sesion_sin_cwd_se_ancla_al_nombre_decodificado() {
+        // Transcript sin ningún record con cwd: el anclaje cae al nombre
+        // codificado del directorio ("-home-user-proj" → "/home/user/proj").
+        let dir = tmpdir("decode_anchor");
+        let recs = vec![last_prompt_record("s1", "algo")];
+        write_top_level(&dir, "-home-user-proj", "s1", &recs);
+
+        let report = build_report(dir.to_str().unwrap());
+        assert_eq!(report.repo_count, 1);
+        assert_eq!(report.repos[0].cwd, "/home/user/proj");
+        assert_eq!(report.repos[0].sessions[0].session_id, "s1");
     }
 }

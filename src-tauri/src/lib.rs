@@ -13,13 +13,14 @@ use std::path::Path;
 use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::time::Duration;
 
-use arrow::{ContentOut, ReportOut};
+use arrow::{ContentOut, ReportOut, TrashOut};
 use notify::{RecursiveMode, Watcher};
 #[cfg(target_os = "macos")]
 use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 
 mod editor;
+mod terminal;
 mod worktrees;
 
 /// `~/.claude/projects` (fuente de verdad nativa de Claude Code).
@@ -136,6 +137,37 @@ fn prune_worktrees(app: AppHandle, repo: String, dry_run: bool) -> worktrees::Cl
     res
 }
 
+/// Send ALL of a session's artifacts to the system trash (transcript, sibling
+/// `<sid>/` dir, `file-history/<sid>/`, `session-env/<sid>/`). Wraps the lib's
+/// `arrow::trash_session` with `execute = true`: the UI already asked the user
+/// to confirm before invoking, and the dry-run preview lives in the lib/CLI.
+/// Reversible by design (system trash via `gio trash`, never `rm -rf`); the
+/// lib REFUSES a live session or an ambiguous id and we surface that error
+/// verbatim. On success we emit `report-changed` explicitly: the notify
+/// watcher will also see the transcript vanish from `~/.claude/projects` (a
+/// second, debounced emit — harmless, the refetch is idempotent), but the
+/// explicit emit keeps the refresh immediate and also covers the artifacts
+/// that live OUTSIDE the watched dir (file-history / session-env).
+#[tauri::command]
+fn trash_session(app: AppHandle, session_id: String) -> Result<TrashOut, String> {
+    let res =
+        arrow::trash_session(&projects_dir(), &session_id, true).map_err(|e| e.to_string())?;
+    let _ = app.emit("report-changed", ());
+    Ok(res)
+}
+
+/// Open a terminal emulator running `claude --resume <session_id>` in `cwd`
+/// (the session's `resumeCwd`). Delegates to a real terminal on `$PATH` — see
+/// `terminal.rs` for the probe order and quoting. Fire-and-forget: Ok means
+/// the emulator launched, not that claude resumed (the terminal itself shows
+/// that). If no emulator is found the UI falls back to its `copy cmd`. The
+/// resumed session will write new records under `~/.claude/projects`, which
+/// the notify watcher picks up as normal refreshes — by design, not a loop.
+#[tauri::command]
+fn resume_in_terminal(session_id: String, cwd: Option<String>) -> Result<(), String> {
+    terminal::resume_in_terminal(&session_id, cwd.as_deref())
+}
+
 /// Watcher nativo: vigila `~/.claude/projects` y, con debounce, emite
 /// `report-changed` para que el frontend refresque sin polling.
 ///
@@ -225,7 +257,9 @@ pub fn run() {
             check_update,
             open_url,
             remove_worktree,
-            prune_worktrees
+            prune_worktrees,
+            trash_session,
+            resume_in_terminal
         ])
         .setup(|app| {
             spawn_watcher(app.handle().clone());

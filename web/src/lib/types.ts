@@ -3,6 +3,7 @@
 export interface Report {
   projectsDir: string
   repoCount: number
+  retentionDays: number // cleanupPeriodDays from <claude root>/settings.json (default 30)
   repos: Repo[]
 }
 
@@ -14,12 +15,29 @@ export interface Repo {
 
 export interface Session {
   sessionId: string
-  title: string | null // ai-title generado por Claude
+  title: string | null // last ai-title; falls back to the first human prompt; null → show "(no title)"
   lastPrompt: string | null
   firstActivity: string | null // ISO 8601
   lastActivity: string | null // ISO 8601
+  sizeBytes: number // size of the session's .jsonl on disk
+  resumeCwd: string | null // cwd of the LAST record that carried one (covers resumed sessions)
+  lastPrompts: string[] // last 2 DISTINCT last-prompt values, most recent first, truncated to 200 chars
+  prLinks: PrLink[] // PRs linked in the session, deduped by number, chronological
+  live: boolean // a running Claude Code process registers this session (best-effort)
   fileCount: number
   files: FileChange[]
+}
+
+export interface PrLink {
+  number: number
+  url: string
+}
+
+// Outcome of `arrow --trash-session <id> [--yes]` / lib `trash_session()`.
+export interface TrashResult {
+  sessionId: string // full resolved session id
+  dryRun: boolean // preview only; disk untouched
+  trashed: string[] // paths sent (or, on dry-run, that WOULD be sent) to the system trash
 }
 
 export interface FileChange {

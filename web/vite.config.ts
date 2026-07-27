@@ -51,6 +51,11 @@ function arrowApi() {
         if (session) args.push('--session', session)
         run(args, res)
       })
+      // NOTE: there is deliberately NO /api/trash-session here. Disk-mutating
+      // actions never go over HTTP (same rule as the worktree Clean): the dev
+      // server has no origin story a hostile web page can't fake with a no-cors
+      // POST, so in the browser the UI degrades to a `copy cmd` the user runs
+      // themselves. Trashing from the UI is Tauri-only.
     },
   }
 }
