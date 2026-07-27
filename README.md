@@ -14,7 +14,7 @@
 opening an IDE, without AI chat, and **without depending on git or hooks**.
 
 > Status: **Phase 2 complete + polish — released on Linux
-> ([v0.2.1](https://github.com/MrArcher23/arrow/releases/latest))**. A desktop app (Tauri 2.x) with
+> ([v0.2.2](https://github.com/MrArcher23/arrow/releases/latest))**. A desktop app (Tauri 2.x) with
 > the Rust parser as its native backend, **already usable day to day** on Linux (`.deb` + AppImage).
 > Phases 0 (parser/CLI), 1 (web UI) and 2 (packaging) are complete; since then: 36 parser tests, a
 > resilient watcher, zoom, a custom titlebar, active-session focus, live diff-panel refresh,
