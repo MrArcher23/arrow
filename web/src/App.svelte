@@ -7,11 +7,13 @@
   import OpenInEditor from './components/OpenInEditor.svelte'
   import WorktreesModal from './components/WorktreesModal.svelte'
   import VersionBadge from './components/VersionBadge.svelte'
+  import SessionsView from './components/SessionsView.svelte'
   import { listen } from '@tauri-apps/api/event'
   import { loadReport, loadContent, clearContentCache, inTauri } from './lib/api'
   import { loadZoom, applyZoom, clampZoom, ZOOM_STEP } from './lib/zoom'
   import { winToggleMaximize } from './lib/window'
   import { isLive, focusRepos as focusReposOf } from './lib/time'
+  import { auditRepos, sessionRepos, uniqueSessions } from './lib/audit'
   import { DEFAULT_THEME } from './lib/themes'
   import type { Report, FileContent } from './lib/types'
 
@@ -25,9 +27,29 @@
   let theme = $state(localStorage.getItem('arrow.theme') ?? DEFAULT_THEME)
   let showWorktrees = $state(false)
 
+  // Active tab [Audit | Sessions], persisted. Audit = the original view
+  // (sidebar + diff); Sessions = resume/clean sessions (SessionsView).
+  let view = $state<'audit' | 'sessions'>(
+    localStorage.getItem('arrow.view') === 'sessions' ? 'sessions' : 'audit'
+  )
+  $effect(() => {
+    localStorage.setItem('arrow.view', view)
+  })
+
+  // Audit-view repos: only sessions WITH edits (the parser now also reports
+  // chat-only sessions, which belong to the Sessions tab).
+  let auditList = $derived(report ? auditRepos(report.repos) : [])
+
+  // Sessions-tab topbar counters, deduped: the raw report repeats a session
+  // under every git root it edited from, but it is still ONE session.
+  let dedupedSessions = $derived(report ? uniqueSessions(report.repos) : [])
+  let sessionCount = $derived(dedupedSessions.length)
+  let liveSessionCount = $derived(dedupedSessions.filter((s) => s.live).length)
+  let sessionRepoCount = $derived(report ? sessionRepos(report.repos).length : 0)
+
   // Main repo roots the worktree inventory queries (one `git worktree list` each).
   // Deduped; with the git_root re-anchor these are already main roots, not worktrees.
-  let mainRepoRoots = $derived(report ? [...new Set(report.repos.map((r) => r.cwd))] : [])
+  let mainRepoRoots = $derived([...new Set(auditList.map((r) => r.cwd))])
 
   // Reloj independiente: un tick periódico (ver onMount) reasigna `now` para que el
   // tiempo relativo ("Nm ago") y el punto verde envejezcan/caduquen aunque el report no
@@ -36,7 +58,7 @@
 
   // Repos con punto verde = los del foco (sesión activa + ráfaga) con actividad reciente.
   let liveCount = $derived(
-    report ? focusReposOf(report.repos, now).filter((r) => isLive(r.sessions[0]?.lastActivity, now)).length : 0
+    focusReposOf(auditList, now).filter((r) => isLive(r.sessions[0]?.lastActivity, now)).length
   )
 
   // Zoom de la UI (estilo VSCode/terminal): Ctrl +/−/0. El estado vive aquí (reactivo);
@@ -63,8 +85,8 @@
     } else if (e.key === 'f' || e.key === 'F') {
       // Ctrl/Cmd+F: open the in-diff find panel. Routed through DiffView so it works even
       // when no editor column is focused yet. No-op (and lets the default through) if there
-      // is no diff shown.
-      if (!content) return
+      // is no diff shown (or the Sessions tab is active — the diff is hidden there).
+      if (view !== 'audit' || !content) return
       e.preventDefault()
       diffView?.openSearch()
     }
@@ -158,8 +180,9 @@
         // Auto-open the top file ONLY when there is ACTIVE work (a recent edit). On an idle
         // launch — e.g. opening arrow the next day, not working on anything yet — we show
         // nothing as current (honest): the sidebar shows collapsed history instead. Anchored
-        // to the data timestamp (isLive), not "the last thing arrow ever saw".
-        const s = r.repos[0]?.sessions[0]
+        // to the data timestamp (isLive), not "the last thing arrow ever saw". Scoped to
+        // the Audit repos (with edits): a chat-only session never auto-opens anything.
+        const s = auditRepos(r.repos)[0]?.sessions[0]
         const f = s?.files[0]
         if (s && f && isLive(s.lastActivity)) select(s.sessionId, f.path)
       } else if (selected && fileStillInReport(r, selected)) {
@@ -250,17 +273,32 @@
   <!-- Titlebar custom: el doble-click maximiza (convención de ventana, no control de teclado). -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <header class="topbar" data-tauri-drag-region ondblclick={onTitlebarDblClick}>
-    <button class="icon-btn" onclick={toggleSidebar} title="Toggle sidebar" aria-label="Toggle sidebar">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" />
-        <line x1="6" y1="2.5" x2="6" y2="13.5" stroke="currentColor" />
-      </svg>
-    </button>
+    {#if view === 'audit'}
+      <button class="icon-btn" onclick={toggleSidebar} title="Toggle sidebar" aria-label="Toggle sidebar">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" />
+          <line x1="6" y1="2.5" x2="6" y2="13.5" stroke="currentColor" />
+        </svg>
+      </button>
+    {/if}
     <span class="brand" data-tauri-drag-region>arrow</span>
-    <span class="subtitle" data-tauri-drag-region>audit of Claude Code changes</span>
+    <span class="subtitle" data-tauri-drag-region>
+      {view === 'audit' ? 'audit of Claude Code changes' : 'resume any session, anywhere'}
+    </span>
+    <nav class="tabs" aria-label="View">
+      <button class="tab" class:on={view === 'audit'} onclick={() => (view = 'audit')}>Audit</button>
+      <button class="tab" class:on={view === 'sessions'} onclick={() => (view = 'sessions')}>
+        Sessions
+      </button>
+    </nav>
     <div class="actions">
-      {#if liveCount > 0}<span class="live">● {liveCount}</span>{/if}
-      {#if report}<span class="repos">{report.repoCount} repos</span>{/if}
+      {#if view === 'sessions'}
+        {#if liveSessionCount > 0}<span class="live">● {liveSessionCount}</span>{/if}
+        {#if report}<span class="repos">{sessionRepoCount} repos · {sessionCount} sessions</span>{/if}
+      {:else}
+        {#if liveCount > 0}<span class="live">● {liveCount}</span>{/if}
+        {#if report}<span class="repos">{auditList.length} repos</span>{/if}
+      {/if}
       {#if inTauri && report}
         <button class="wtbtn" onclick={() => (showWorktrees = true)} title="Worktree inventory">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -283,7 +321,9 @@
     </div>
   </header>
 
-  <div class="layout" class:resizing bind:this={layoutEl}>
+  <!-- Both views stay mounted (hidden via CSS, like the mockup): the open diff,
+       scroll position and toggles survive switching tabs. -->
+  <div class="layout" class:resizing class:hide={view !== 'audit'} bind:this={layoutEl}>
     <aside
       class="sidebar"
       class:collapsed={sidebarCollapsed}
@@ -328,6 +368,18 @@
         <DiffView bind:this={diffView} {content} loading={loadingContent} themeId={theme} />
       </div>
     </main>
+  </div>
+
+  <!-- Sessions tab: repos → sessions to resume or clean up (SessionsView). -->
+  <div class="viewwrap" class:hide={view !== 'sessions'}>
+    {#if error}
+      <div class="error">{error}</div>
+    {/if}
+    {#if report}
+      <SessionsView {report} {now} onRefresh={() => refresh(false)} />
+    {:else if !error}
+      <div class="loading">Loading sessions…</div>
+    {/if}
   </div>
 
   {#if showWorktrees && report}
@@ -385,6 +437,36 @@
   .subtitle {
     color: var(--dim);
     font-size: 12px;
+  }
+  /* Switcher segmentado [Audit | Sessions] (mockup) */
+  .tabs {
+    display: inline-flex;
+    margin-left: 4px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--chip);
+  }
+  .tab {
+    border: none;
+    background: transparent;
+    color: var(--dim);
+    font: inherit;
+    font-size: 12px;
+    padding: 3px 12px;
+    cursor: pointer;
+  }
+  .tab:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
+  .tab.on {
+    background: var(--active);
+    color: var(--fg);
+  }
+  .tab:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 1px;
   }
   .actions {
     margin-left: auto;
@@ -458,6 +540,18 @@
     display: flex;
     flex: 1;
     min-height: 0;
+  }
+  /* La pestaña inactiva se oculta sin desmontarse (conserva su estado). */
+  .layout.hide,
+  .viewwrap.hide {
+    display: none;
+  }
+  /* Contenedor scrolleable de la pestaña Sessions (mockup .viewwrap). */
+  .viewwrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 12px 16px 0;
   }
   .sidebar {
     flex: none;

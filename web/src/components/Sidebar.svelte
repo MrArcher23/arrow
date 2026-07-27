@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Report, Repo, Session } from '../lib/types'
   import { isLive, focusRepos as focusReposOf, relative, dateBucket, BUCKET_ORDER } from '../lib/time'
+  import { auditRepos } from '../lib/audit'
 
   interface Props {
     report: Report
@@ -10,28 +11,33 @@
   }
   let { report, selected, now, onSelect }: Props = $props()
 
+  // Audit = only sessions with edits: the parser now also reports chat-only
+  // sessions (for the Sessions tab); filtering them here keeps this view
+  // exactly as it was. Same helper App.svelte uses.
+  let repos = $derived(auditRepos(report.repos))
+
   // Foco: los repos de la sesión activa (la de actividad más reciente) + cualquiera tocado
   // en la misma ráfaga (~10 min). El resto va a "Other repos". Lógica única en time.ts.
   // IDLE (sin actividad reciente, p.ej. abrir arrow al día siguiente): focusRepos = [] →
   // todo cae al historial colapsado y no se pinta nada como "activo".
-  let focusRepos = $derived(focusReposOf(report.repos, now))
-  let otherRepos = $derived(report.repos.filter((r) => !focusRepos.includes(r)))
+  let focusRepos = $derived(focusReposOf(repos, now))
+  let otherRepos = $derived(repos.filter((r) => !focusRepos.includes(r)))
   let idle = $derived(focusRepos.length === 0)
-  let lastActivity = $derived(report.repos[0]?.sessions[0]?.lastActivity ?? null)
+  let lastActivity = $derived(repos[0]?.sessions[0]?.lastActivity ?? null)
 
   function focusDefaults() {
     const o: Record<string, boolean> = {}
-    for (const r of focusReposOf(report.repos, now)) o[r.cwd] = true
+    for (const r of focusReposOf(repos, now)) o[r.cwd] = true
     return o
   }
   let openRepos = $state<Record<string, boolean>>(focusDefaults())
 
   // Tras un refresco, auto-expandir los repos del foco nuevos sin pisar los toggles del usuario.
   $effect(() => {
-    const fset = new Set(focusReposOf(report.repos, now).map((r) => r.cwd))
+    const fset = new Set(focusReposOf(repos, now).map((r) => r.cwd))
     let changed = false
     const next = { ...openRepos }
-    for (const r of report.repos) {
+    for (const r of repos) {
       if (fset.has(r.cwd) && !(r.cwd in next)) {
         next[r.cwd] = true
         changed = true

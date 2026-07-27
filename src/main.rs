@@ -50,6 +50,15 @@ struct Cli {
     /// Check GitHub for a newer arrow release (network; read-only, never installs)
     #[arg(long)]
     check_update: bool,
+
+    /// Send a session's artifacts (transcript, sibling dir, file-history,
+    /// session-env) to the system trash. DRY-RUN unless --yes is also passed.
+    #[arg(long, value_name = "SESSION_ID")]
+    trash_session: Option<String>,
+
+    /// Actually execute --trash-session (without it, arrow only previews)
+    #[arg(long)]
+    yes: bool,
 }
 
 const RESET: &str = "\x1b[0m";
@@ -93,6 +102,34 @@ fn main() -> Result<()> {
                 "{GREEN}arrow is up to date{RESET} {DIM}(v{}){RESET}",
                 st.current
             );
+        }
+        return Ok(());
+    }
+
+    if let Some(sid) = cli.trash_session.as_deref() {
+        // Dry-run by default: locate and show; only --yes actually trashes.
+        let out = arrow::trash_session(&projects_dir, sid, cli.yes)?;
+        if cli.json {
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            let action = if out.dry_run {
+                "Would send to trash"
+            } else {
+                "Sent to trash"
+            };
+            println!(
+                "{BOLD}{action}{RESET} {DIM}· session {}{RESET}",
+                out.session_id
+            );
+            for p in &out.trashed {
+                println!("  {p}");
+            }
+            if out.dry_run {
+                println!(
+                    "{YELLOW}Dry-run only — nothing was deleted.{RESET} \
+                     {DIM}Re-run with --yes to send these to the trash.{RESET}"
+                );
+            }
         }
         return Ok(());
     }
@@ -156,7 +193,7 @@ fn render_repo(
         let short: String = sid.chars().take(8).collect();
         let title = metas
             .get(sid)
-            .and_then(|m| m.title.as_deref())
+            .and_then(|m| m.effective_title())
             .unwrap_or("(sin título)");
         let (mut add, mut rem) = (0usize, 0usize);
         for fc in sess.files.values() {
