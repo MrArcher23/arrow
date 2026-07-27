@@ -78,8 +78,10 @@ más la **pestaña Sessions** (v0.2.0): navegar, retomar (`claude --resume`) y l
 - **Pestaña Sessions** (v0.2.0, switcher `[Audit | Sessions]` en la topbar): el parser reporta
   **TODAS** las sesiones — las solo-chat van con `fileCount: 0` y la vista Audit las filtra con
   `auditRepos()` (`web/src/lib/audit.ts`), quedando idéntica a antes. Campos nuevos por sesión:
-  `sizeBytes`, `resumeCwd` (cwd del **ÚLTIMO** record — una sesión reanudada desde otra carpeta
-  ancla bien), `lastPrompts` (últimos 2 distintos), `prLinks` (records `pr-link`), `live`
+  `sizeBytes`, `resumeCwd` (el cwd de la sesión que **CODIFICA** al nombre del dir del transcript —
+  su dir de registro, el único desde donde `claude --resume` la encuentra; un cwd que deriva a un
+  repo anidado a mitad de sesión NO cambia el ancla; fallback: el último cwd),
+  `lastPrompts` (últimos 2 distintos), `prLinks` (records `pr-link`), `live`
   (proceso **real**: `/proc/<pid>` en Linux, `ps -p` donde no hay procfs — `updatedAt` NO se
   heartbeatea en idle y solo es último recurso); `retentionDays` sale de `cleanupPeriodDays`
   (default 30). El report crudo duplica una sesión que editó desde varias raíces git (Audit lo

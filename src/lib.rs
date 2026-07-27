@@ -86,9 +86,15 @@ pub struct SessionMeta {
     /// is a plain string, not `isMeta`/`isCompactSummary`, not starting with "<").
     /// Title fallback when the session never got an `ai-title`.
     pub first_user_prompt: Option<String>,
-    /// `cwd` of the LAST record that carried one — covers sessions resumed from a
-    /// different folder than the one their transcript dir encodes.
+    /// Where `claude --resume` will actually FIND the session: the session cwd
+    /// that encodes to the transcript's parent dir name (its registration dir),
+    /// resolved in `collect`; until then, the `cwd` of the LAST record seen —
+    /// which is also the honest fallback when no cwd matches the dir name.
     pub resume_cwd: Option<String>,
+    /// Every DISTINCT `cwd` seen in the session, in first-seen order. Input for
+    /// the `resume_cwd` resolution above (a cwd can drift mid-session, e.g.
+    /// into a nested repo, without the session being registered there).
+    pub cwds: Vec<String>,
     /// Last 2 DISTINCT `last-prompt` values, most recent first, each truncated to
     /// 200 chars (char boundary, never splits UTF-8).
     pub last_prompts: Vec<String>,
@@ -738,6 +744,20 @@ pub fn collect(
         let resume_cwd = {
             let meta = c.metas.entry(sid_from_name.clone()).or_default();
             meta.size_bytes = size_bytes;
+            // `claude --resume` finds a session by ENCODING the current dir and
+            // looking it up as a project dir name — so the honest resume anchor
+            // is the session cwd that encodes to THIS transcript's parent dir
+            // (where Claude Code registered it). The last cwd seen is not it
+            // when the cwd drifted mid-session (e.g. into a nested repo): the
+            // session is invisible to `claude --resume` from there. No matching
+            // cwd ⇒ keep the last one, the best-effort fallback.
+            if let Some(registered) = meta
+                .cwds
+                .iter()
+                .find(|cwd| encode_project_dir(cwd) == encoded_dir)
+            {
+                meta.resume_cwd = Some(registered.clone());
+            }
             meta.resume_cwd.clone()
         };
         let already_listed = c
@@ -745,10 +765,10 @@ pub fn collect(
             .values()
             .any(|r| r.sessions.contains_key(&sid_from_name));
         if !already_listed {
-            // Anchor: git root of the LAST cwd seen (covers sessions resumed
-            // from another folder — their records' cwd differs from the encoded
-            // dir name); a non-git cwd anchors as-is (git_root returns it);
-            // with no cwd in any record, best-effort decode of the dir name.
+            // Anchor: git root of the resume cwd (the registration dir when one
+            // of the session's cwds encodes to the transcript dir name; else
+            // the last cwd seen); a non-git cwd anchors as-is (git_root returns
+            // it); with no cwd in any record, best-effort decode of the name.
             let anchor = match &resume_cwd {
                 Some(cwd) => git_root(cwd, &mut roots),
                 None => decode_project_dir(&encoded_dir),
@@ -843,11 +863,16 @@ fn ingest(
                 }
                 _ => {}
             }
-            // Last cwd seen wins: where the session actually ran last (a resumed
-            // session's later records carry the new folder).
+            // Last cwd seen wins for now; `collect` re-anchors to the session's
+            // registration dir once the whole transcript has been ingested. The
+            // distinct-cwd list feeds that resolution.
             if let Some(cwd) = v.get("cwd").and_then(Value::as_str) {
                 if !cwd.is_empty() {
-                    metas.entry(sid.to_string()).or_default().resume_cwd = Some(cwd.to_string());
+                    let e = metas.entry(sid.to_string()).or_default();
+                    e.resume_cwd = Some(cwd.to_string());
+                    if !e.cwds.iter().any(|seen| seen == cwd) {
+                        e.cwds.push(cwd.to_string());
+                    }
                 }
             }
             if let Some(ts) = v.get("timestamp").and_then(Value::as_str) {
@@ -1107,6 +1132,17 @@ fn worktree_main_root(dot_git_file: &Path) -> Option<String> {
 /// multi-byte UTF-8 sequence is never split).
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
+}
+
+/// Encode a cwd the way Claude Code names its per-project transcript dirs:
+/// every non-alphanumeric char becomes "-" ("/home/u/p_x.1" → "-home-u-p-x-1";
+/// verified against real dirs, where "/", "_" and "." all collapse to "-").
+/// Unlike decoding, ENCODING is deterministic — so given a session's observed
+/// cwds we can tell which one the transcript dir was registered under.
+fn encode_project_dir(cwd: &str) -> String {
+    cwd.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
 }
 
 /// Best-effort decode of an encoded project dir name ("-home-user-proj" →
@@ -2438,6 +2474,59 @@ mod tests {
         );
         let s = &report.repos[0].sessions[0];
         assert_eq!(s.resume_cwd.as_deref(), repo_b.to_str());
+    }
+
+    #[test]
+    fn resume_cwd_se_ancla_al_dir_registrado_no_al_ultimo_cwd() {
+        // Caso real e50314d8: sesión iniciada en ~/Plick (el transcript vive en
+        // el dir que CODIFICA ese cwd) cuyo cwd derivó a un repo ANIDADO
+        // (~/Plick/plick-blog-bot). `claude --resume` solo la encuentra desde
+        // ~/Plick, así que el ancla debe ser el dir registrado, no el último cwd.
+        let dir = tmpdir("resume_anchor");
+        let repo_a = dir.join("repoA");
+        let nested = repo_a.join("nested");
+        fs::create_dir_all(repo_a.join(".git")).unwrap();
+        fs::create_dir_all(nested.join(".git")).unwrap();
+        let recs = vec![
+            user_record(
+                "s1",
+                repo_a.to_str().unwrap(),
+                "2026-06-02T00:00:00Z",
+                "empezamos en el repo padre",
+            ),
+            user_record(
+                "s1",
+                nested.to_str().unwrap(),
+                "2026-06-02T00:01:00Z",
+                "el cwd derivó al repo anidado",
+            ),
+        ];
+        // El transcript vive bajo el nombre que CODIFICA el cwd inicial —
+        // exactamente como lo registra Claude Code.
+        let encoded = encode_project_dir(repo_a.to_str().unwrap());
+        write_top_level(&dir, &encoded, "s1", &recs);
+
+        let report = build_report(dir.to_str().unwrap());
+        assert_eq!(report.repo_count, 1, "una sesión vive en UN repo");
+        assert_eq!(
+            report.repos[0].cwd,
+            repo_a.to_string_lossy(),
+            "el ancla es el dir REGISTRADO (donde --resume la encuentra)"
+        );
+        assert_eq!(
+            report.repos[0].sessions[0].resume_cwd.as_deref(),
+            repo_a.to_str(),
+            "resumeCwd apunta al dir registrado, no al último cwd"
+        );
+    }
+
+    #[test]
+    fn encode_project_dir_colapsa_no_alfanumericos() {
+        // Regla verificada con dirs reales: "/", "_" y "." colapsan a "-".
+        assert_eq!(
+            encode_project_dir("/home/mrarcher/Plick/plick_menu_v2.1"),
+            "-home-mrarcher-Plick-plick-menu-v2-1"
+        );
     }
 
     #[test]
