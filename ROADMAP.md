@@ -321,15 +321,20 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
   `\ No newline at end of file` no se modela (no aparece en `structuredPatch` real). **Posible mejora
   (Fase 3):** usar `~/.claude/file-history/<sessionId>/<sha256(path)[:16]>@v<n>` (snapshot canónico) para
   los casos con drift donde el reverse-apply aborta.
-- **Build de macOS en CI** — 🟡 configurado, pendiente el primer tag real. `release.yml` es ahora una
-  **matrix** (Linux `ubuntu-22.04` + `macos-14` arm64 + `macos-13` Intel) preparada para que cada tag
-  `v*` compile y publique los dos `.dmg` (ad-hoc signed, sin secretos) junto al `.deb` + AppImage, en
-  runners de macOS **gratis** (sin Mac física). Encima va `install.sh` (raíz), el one-liner
-  `curl … | bash` que baja el `.dmg` del último Release y lo deja en `/Applications` (falla con un
-  mensaje claro si todavía no hay `.dmg`). **Aún no se ha empujado ningún tag con esta matrix**, así
-  que no existe un `.dmg` publicado todavía: el primer `v*` lo generará. **Pendiente:** correr ese
-  primer tag, la firma/notarización (Apple Developer, ~99 USD/año) para quitar la fricción de
-  Gatekeeper, y un **Homebrew Cask** (`brew install --cask`) con upgrade/uninstall.
+- **Build de macOS en CI** — 🟡 funcionando para arm64; Intel pasa a **cross-compile**. `release.yml`
+  es una **matrix** que en cada tag `v*` compila y publica los `.dmg` (ad-hoc signed, sin secretos)
+  junto al `.deb` + AppImage, en runners de macOS **gratis** (sin Mac física). Encima va `install.sh`
+  (raíz), el one-liner `curl … | bash` que baja el `.dmg` del último Release y lo deja en
+  `/Applications` (falla con un mensaje claro si todavía no hay `.dmg`). **Historia del `.dmg` Intel**:
+  el job `macos-13` se quedó "Waiting for a runner" en TODOS los releases (v0.1.5 → v0.2.0, terminaba
+  `cancelled`) — los runners Intel gratis de GitHub son escasos / en retirada. Fix aplicado
+  (2026-07-27): se eliminó el job `macos-13` y el `.dmg` x64 ahora se **cross-compila en el runner
+  arm64** (`rustup target add x86_64-apple-darwin` + `cargo tauri build --target x86_64-apple-darwin`;
+  Tauri lo nombra `arrow_<v>_x64.dmg`, justo lo que `install.sh` grepea). **Sin validar con un tag
+  real todavía** — el próximo `v*` lo estrena; el `_x64.dmg` de v0.2.0 sigue faltando (backfill
+  posible re-empujando el tag, que re-adjunta assets al mismo Release). **Pendiente:** la
+  firma/notarización (Apple Developer, ~99 USD/año) para quitar la fricción de Gatekeeper, y un
+  **Homebrew Cask** (`brew install --cask`) con upgrade/uninstall.
 - **Aviso de actualización (check-for-updates)** — ✅ implementado. arrow consulta el último Release de
   GitHub y avisa si hay una versión más nueva, **sin descargar ni instalar nada** (honesto: unsigned ⇒
   un auto-updater silencioso pelearía con Gatekeeper, por eso solo *avisa*). Capa de red **opt-in y

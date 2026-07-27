@@ -4,10 +4,11 @@ name: Release
 # Builds the desktop bundles with `cargo tauri build` (exactly like locally) and publishes a
 # GitHub Release with the artifacts (.deb + AppImage on Linux, .dmg on macOS) attached.
 #
-# The build fans out over a platform matrix: one Linux runner and two macOS runners
-# (Apple Silicon + Intel). Each job uploads ITS bundles to the same tag; action-gh-release
-# is idempotent on the tag (creates the Release if missing, appends assets if it exists).
-# Windows runners can be added later the same way.
+# The build fans out over a platform matrix: one Linux runner and two macOS jobs that BOTH
+# run on the arm64 runner (Apple Silicon natively; Intel cross-compiled via
+# `--target x86_64-apple-darwin`). Each job uploads ITS bundles to the same tag;
+# action-gh-release is idempotent on the tag (creates the Release if missing, appends assets
+# if it exists). Windows runners can be added later the same way.
 # Validate this workflow with a real tag push before relying on it for releases.
 on:
   push:
@@ -20,7 +21,7 @@ permissions:
 
 jobs:
   release:
-    name: Build bundles (${{ matrix.os }}) and publish
+    name: Build bundles (${{ matrix.label }}) and publish
     # fail-fast: false → a macOS failure must not abort the Linux release (and vice versa).
     strategy:
       fail-fast: false
@@ -34,6 +35,7 @@ jobs:
           # needs. Do NOT bump this to ubuntu-latest. No `--bundles` flag: it uses the
           # tauri.conf.json targets (deb, appimage).
           - os: ubuntu-22.04
+            label: ubuntu-22.04
             bundles: ""
             artifacts: |
               src-tauri/target/release/bundle/deb/*.deb
@@ -42,12 +44,20 @@ jobs:
           # only deb/appimage, so without the flag the macOS build would try those and fail. The
           # flag overrides the config per-build without touching it (zero risk to the Linux build).
           - os: macos-14
+            label: macos-14 arm64
             bundles: "--bundles app dmg"
             artifacts: src-tauri/target/release/bundle/dmg/*.dmg
-          # macOS Intel (x64).
-          - os: macos-13
-            bundles: "--bundles app dmg"
-            artifacts: src-tauri/target/release/bundle/dmg/*.dmg
+          # macOS Intel (x64), CROSS-COMPILED on the arm64 runner. Do NOT use macos-13 here:
+          # GitHub's free Intel runners are scarce / being phased out — the macos-13 job sat in
+          # "Waiting for a runner" for hours on every release from v0.1.5 through v0.2.0 and the
+          # Intel .dmg never shipped. Xcode on arm64 targets x86_64 natively, so we add the Rust
+          # target and pass `--target`; Tauri then bundles under target/x86_64-apple-darwin/ and
+          # still names the artifact `arrow_<v>_x64.dmg` (the exact name install.sh greps for).
+          - os: macos-14
+            label: macos-14 x64 cross
+            target: x86_64-apple-darwin
+            bundles: "--bundles app dmg --target x86_64-apple-darwin"
+            artifacts: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -71,6 +81,11 @@ jobs:
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      # Only the cross-compiled matrix entry (Intel-on-arm64) sets matrix.target.
+      - name: Add the cross-compilation Rust target
+        if: matrix.target != ''
+        run: rustup target add ${{ matrix.target }}
 
       # No cargo cache here ON PURPOSE. On Linux a shared cache poisons the release: a
       # `cargo-tauri` binary built on a newer runner (24.04, glibc 2.39) gets restored onto
