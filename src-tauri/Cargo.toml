@@ -1,6 +1,6 @@
 [package]
 name = "arrow-app"
-version = "0.1.9"
+version = "0.2.0"
 edition = "2021"
 description = "arrow — visor de auditoría de Claude Code (app de escritorio Tauri)"
 license = "MIT"
