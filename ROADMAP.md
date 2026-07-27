@@ -330,9 +330,10 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
   `cancelled`) — los runners Intel gratis de GitHub son escasos / en retirada. Fix aplicado
   (2026-07-27): se eliminó el job `macos-13` y el `.dmg` x64 ahora se **cross-compila en el runner
   arm64** (`rustup target add x86_64-apple-darwin` + `cargo tauri build --target x86_64-apple-darwin`;
-  Tauri lo nombra `arrow_<v>_x64.dmg`, justo lo que `install.sh` grepea). **Sin validar con un tag
-  real todavía** — el próximo `v*` lo estrena; el `_x64.dmg` de v0.2.0 sigue faltando (backfill
-  posible re-empujando el tag, que re-adjunta assets al mismo Release). **Pendiente:** la
+  Tauri lo nombra `arrow_<v>_x64.dmg`, justo lo que `install.sh` grepea). ✅ **Validado en vivo el
+  mismo día**: v0.2.1 y v0.2.2 publicaron los 4 assets cada uno — incluido el `_x64.dmg`, el primero
+  que arrow logra publicar. (El `_x64.dmg` de v0.2.0 se dejó faltante a propósito: v0.2.1 ya lo
+  cubre como Latest.) **Pendiente:** la
   firma/notarización (Apple Developer, ~99 USD/año) para quitar la fricción de Gatekeeper, y un
   **Homebrew Cask** (`brew install --cask`) con upgrade/uninstall.
 - **Aviso de actualización (check-for-updates)** — ✅ implementado. arrow consulta el último Release de
