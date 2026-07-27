@@ -117,7 +117,10 @@ más la **pestaña Sessions** (v0.2.0): navegar, retomar (`claude --resume`) y l
   app de marca inglesa. Ej: `live`, `History`, `Other repos`, `new file`, `5m ago`. Los strings de
   UI viven en los componentes Svelte y en `web/src/lib/time.ts` (tiempo relativo y buckets de fecha).
 - **Verifica cada cambio del parser contra datos reales** (`/verify-parser`) antes de decir que funciona; reporta la salida, no una afirmación.
-- Commits: mensaje en imperativo. Rama `main`. Push solo cuando se pida.
+- Commits: mensaje en imperativo. Rama `main`. Push solo cuando se pida. **Sin coautoría de IA**:
+  nunca añadir trailers `Co-Authored-By`/`Claude-Session` ni pies "Generated with…" en commits o
+  PRs — la autoría del repo es del mantenedor (decisión tomada; ya hubo que reescribir historia
+  una vez por esto).
 
 ## Skills del proyecto
 - `/run-arrow` — compila el parser y levanta la UI.
