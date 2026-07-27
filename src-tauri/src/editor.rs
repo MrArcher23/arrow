@@ -185,7 +185,7 @@ pub struct EditorOut {
 }
 
 #[cfg(unix)]
-fn is_executable(p: &Path) -> bool {
+pub(crate) fn is_executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     p.metadata()
         .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
@@ -193,13 +193,14 @@ fn is_executable(p: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
-fn is_executable(p: &Path) -> bool {
+pub(crate) fn is_executable(p: &Path) -> bool {
     p.is_file()
 }
 
 /// Resolve a binary on `$PATH` (first directory that holds an executable of
-/// that name). Pure filesystem lookup — no subprocess.
-fn which(bin: &str) -> Option<PathBuf> {
+/// that name). Pure filesystem lookup — no subprocess. Shared with
+/// `terminal.rs` (the "Resume in terminal" emulator probe).
+pub(crate) fn which(bin: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|dir| dir.join(bin))

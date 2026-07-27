@@ -1,5 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { Report, FileContent, Editor, RepoWorktrees, CleanupResult, UpdateStatus } from './types'
+import type {
+  Report,
+  FileContent,
+  Editor,
+  RepoWorktrees,
+  CleanupResult,
+  UpdateStatus,
+  TrashResult,
+} from './types'
 
 // Única capa que conoce el transporte. Dos modos, MISMO contrato:
 //   - App de escritorio (Tauri): llama al backend Rust vía invoke() — sin HTTP.
@@ -109,4 +117,24 @@ export async function removeWorktree(
 export async function pruneWorktrees(repo: string, dryRun: boolean): Promise<CleanupResult> {
   if (!inTauri) throw new Error('Cleaning worktrees is only available in the desktop app')
   return invoke<CleanupResult>('prune_worktrees', { repo, dryRun })
+}
+
+// Send a session's artifacts to the system trash (transcript, sibling dir,
+// file-history, session-env). Executes directly — the UI confirms before
+// calling. Tauri-only, like every disk-mutating action (the worktree Clean
+// precedent): the dev server never exposes a disk-mutating HTTP endpoint, so
+// in the browser the UI degrades to a `copy cmd` the user runs themselves.
+// The backend refuses live sessions / ambiguous prefixes; that error is
+// rethrown verbatim.
+export async function trashSession(sessionId: string): Promise<TrashResult> {
+  if (!inTauri) throw new Error('Trashing sessions is only available in the desktop app')
+  return invoke<TrashResult>('trash_session', { sessionId })
+}
+
+// Open a terminal running `claude --resume <id>` in cwd. Tauri-only (not
+// exposed over HTTP): in the browser the UI hides the button and offers
+// "copy cmd" instead.
+export async function resumeInTerminal(sessionId: string, cwd?: string | null): Promise<void> {
+  if (!inTauri) throw new Error('Resume in terminal is only available in the desktop app')
+  await invoke('resume_in_terminal', { sessionId, cwd: cwd ?? null })
 }
