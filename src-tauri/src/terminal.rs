@@ -6,7 +6,7 @@
 //! user in a shell at the session's cwd instead of a vanishing window.
 //!
 //! Safety: the emulator itself is spawned argv-direct (no shell); the ONE
-//! shell string we do build (`bash -lc '…'`) single-quotes both the cwd and
+//! shell string we do build (`bash -lic '…'`) single-quotes both the cwd and
 //! the session id — ids are UUIDs in practice, but we don't trust the caller.
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -57,7 +57,7 @@ fn validate(session_id: &str, cwd: Option<&str>) -> Result<(), String> {
 }
 
 /// How an emulator's CLI says "run this program". The program is always passed
-/// as SEPARATE argv items (`bash -lc <script>`), never one big string.
+/// as SEPARATE argv items (`bash -lic <script>`), never one big string.
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy)]
 enum ExecStyle {
@@ -97,7 +97,7 @@ fn style_for(basename: &str) -> ExecStyle {
         .unwrap_or(ExecStyle::DashE)
 }
 
-/// Spawn `bin` with the emulator-appropriate argv around `bash -lc <script>`.
+/// Spawn `bin` with the emulator-appropriate argv around `bash -lic <script>`.
 /// Ok(()) means the emulator process LAUNCHED — arrow can't know whether
 /// claude inside it succeeds (honest limit; the terminal itself shows that).
 #[cfg(target_os = "linux")]
@@ -115,7 +115,12 @@ fn spawn_terminal(bin: &std::path::Path, style: ExecStyle, script: &str) -> Resu
             cmd.arg("-x");
         }
     }
-    cmd.arg("bash").arg("-lc").arg(script);
+    // `-i` (interactive) is load-bearing: without it bash skips ~/.bashrc (its
+    // non-interactive guard returns early), so a `claude` installed via nvm/npm
+    // — whose PATH entry lives in .bashrc — is not found. The terminal provides
+    // a real TTY, so an interactive shell is the honest match for what the user
+    // gets typing the same command by hand.
+    cmd.arg("bash").arg("-lic").arg(script);
     // Detach stdio (a chatty launcher must not write into arrow's terminal) —
     // same rationale as `open_in_editor`.
     cmd.stdin(Stdio::null())
