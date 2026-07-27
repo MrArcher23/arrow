@@ -6,7 +6,8 @@ y @ROADMAP.md para seguimiento operativo, deuda técnica y backlog de ideas.
 
 Stack: parser en **Rust** como **librería** (`src/lib.rs`) consumida por la CLI (`src/main.rs`) y
 por el backend de Tauri (`src-tauri/`); UI web **Svelte 5 + Vite + CodeMirror 6** (`web/`),
-empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web + app de escritorio).
+empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web + app de escritorio),
+más la **pestaña Sessions** (v0.2.0): navegar, retomar (`claude --resume`) y limpiar sesiones.
 
 ## Build / run / verificar
 - Compilar parser/CLI: `cargo build --release` → binario en `target/release/arrow`.
@@ -23,7 +24,7 @@ empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web 
   / `npm run build` **sin** `--prefix web` (un `--prefix web` buscaría `web/web/package.json` y falla).
   `src-tauri/` es su **propia raíz de workspace**: `cargo build` en la raíz NO arrastra el backend Tauri.
 - Build del frontend: `npm --prefix web run build`.
-- **Tests**: 24 tests unitarios en el crate del parser (`src/lib.rs` + `src/update.rs`, `cargo test --release`).
+- **Tests**: 36 tests unitarios en el crate del parser (`src/lib.rs` + `src/update.rs`, `cargo test --release`).
   Complementan —no reemplazan— la verificación contra datos reales del skill `/verify-parser`.
 - **Update check** (`src/update.rs`, capa de red opt-in y secundaria — el parser nunca la llama): consulta
   el último Release de GitHub vía `curl` (sin dep HTTP) y **solo avisa** si hay versión nueva, nunca instala.
@@ -63,7 +64,8 @@ empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web 
 - **"Worktrees inventory + Clean"** (botón `Worktrees` en la topbar, **Tauri-only**): lista/clasifica
   los worktrees de git por repo (active / stale ≥10 min / "merged → safe to remove") con tamaños bajo
   demanda y `copy cmd`. El botón **`Clean`** (`remove_worktree`/`prune_worktrees` en `worktrees.rs`) es la
-  **ÚNICA acción que muta disco** en arrow: corre `git worktree remove` **sin `--force`** (git rehúsa un
+  una de las **DOS acciones que mutan disco** en arrow (la otra: el trash de sesiones de la pestaña
+  Sessions, abajo): corre `git worktree remove` **sin `--force`** (git rehúsa un
   worktree locked/sucio) tras **dry-run + confirmación**, solo en filas que git limpiaría (merged+clean o
   prunable), y emite `report-changed` al terminar. Todo el shelling a
   git vive en `src-tauri/src/worktrees.rs` (Tauri-only, clona `editor.rs`): el parser `src/lib.rs` **sigue
@@ -73,6 +75,22 @@ empaquetada en **Tauri 2.x**. Estado: Fases 0, 1 y 2 completas (parser + UI web 
   proceso vivo; tamaño aproximado. active/stale se deriva en el **frontend** desde `lastTouched` (ventana
   de 10 min, `STALE_AFTER` en `time.ts`); el backend solo reporta hechos de git.
 - Solo cuentan transcripts de **primer nivel**; los `.jsonl` anidados (subagentes) se ignoran.
+- **Pestaña Sessions** (v0.2.0, switcher `[Audit | Sessions]` en la topbar): el parser reporta
+  **TODAS** las sesiones — las solo-chat van con `fileCount: 0` y la vista Audit las filtra con
+  `auditRepos()` (`web/src/lib/audit.ts`), quedando idéntica a antes. Campos nuevos por sesión:
+  `sizeBytes`, `resumeCwd` (cwd del **ÚLTIMO** record — una sesión reanudada desde otra carpeta
+  ancla bien), `lastPrompts` (últimos 2 distintos), `prLinks` (records `pr-link`), `live`
+  (proceso **real**: `/proc/<pid>` en Linux, `ps -p` donde no hay procfs — `updatedAt` NO se
+  heartbeatea en idle y solo es último recurso); `retentionDays` sale de `cleanupPeriodDays`
+  (default 30). El report crudo duplica una sesión que editó desde varias raíces git (Audit lo
+  necesita); la pestaña la deduplica con `sessionRepos()` (dueño = repo del `resumeCwd`).
+  **Borrado**: `trash_session()` en la lib manda transcript + carpeta hermana + `file-history/` +
+  `session-env/` a la **papelera** del sistema (`gio trash` / `~/.Trash`), jamás `rm`; rehúsa
+  sesiones live; ids restringidos a `[A-Za-z0-9-]` y stems validados (anti path-escape). CLI:
+  `--trash-session <id>` = dry-run, `--yes` ejecuta. Comandos Tauri: `trash_session` y
+  `resume_in_terminal` (`src-tauri/src/terminal.rs`: `$TERMINAL`→gnome-terminal→kitty→…; macOS
+  osascript/Terminal.app). **Regla**: las mutaciones de disco NUNCA se exponen por HTTP — en el
+  navegador la UI degrada a `copy cmd`, igual que el Clean de worktrees.
 
 ## Reglas del proyecto (IMPORTANT)
 - **Filtrar `~/.claude/`** (HOME global de Claude): es bookkeeping interno, NO código del usuario.

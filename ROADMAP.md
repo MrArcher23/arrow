@@ -5,7 +5,11 @@ Archivo de seguimiento entre sesiones. El **roadmap canónico de fases** vive en
 backlog de ideas que aún no están comprometidas a ninguna fase. Las **convenciones** del proyecto
 están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 
-> Última actualización: 2026-06-04 (**Foco "activo vs idle"**: al abrir arrow sin actividad reciente
+> Última actualización: 2026-07-27 (**Pestaña Sessions, v0.2.0**: segunda pestaña `[Audit | Sessions]`
+> para navegar TODAS las sesiones por repo — título AI, últimos 2 prompts, PRs vinculados, tamaño,
+> cuenta regresiva de retención, punto live por proceso real — con copy id / copy cmd / resume en
+> terminal y limpieza a la papelera del sistema; detalle abajo en "Pestaña Sessions". Antes:
+> **Foco "activo vs idle"**: al abrir arrow sin actividad reciente
 > (<20 min) ya no auto-abre ni marca nada como activo — muestra "No active work" + historial colapsado;
 > + banner honesto si se borró el worktree de un archivo; marca **ARROW** en mayúscula; titlebar nativa
 > oscura en macOS. Antes: **Worktrees inventory** read-only: lista/clasifica los worktrees
@@ -25,7 +29,7 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
 | 4 — edición + GitHub | ⏳ postergado | Ver README. |
 
 ### Pulido aplicado (post-Fase 2)
-- **Tests del parser**: 20 tests unitarios en `src/lib.rs` (`#[cfg(test)] mod tests`) con
+- **Tests del parser**: 36 tests unitarios en el crate (33 en `src/lib.rs` + 3 en `src/update.rs`; 12 son de la pestaña Sessions) con
   transcripts-fixture en tempdir. Cubren lo NO obvio: parsing defensivo, solo-top-level, agrupación
   por raíz git, conteo +/-, filtro de `~/.claude/`, orden de repos y de archivos por recencia,
   metadatos, `file_content`. Correr con `cargo test --release`. Complementan a `/verify-parser` (datos reales).
@@ -193,6 +197,43 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
   (oculta el título nativo duplicado). Trade-off: con un tema CLARO de arrow la barra desentona un poco.
   **Sin verificar en hardware Mac** — el `.dmg` de CI lo prueba el mantenedor/líder.
 
+### Pestaña Sessions (v0.2.0 — navegar, retomar y limpiar sesiones)
+
+- **El dolor real**: con varios repos y sesiones abiertas, al día siguiente no recordás en qué
+  estuviste; `claude --resume` en terminal pierde el sentido visual. La pestaña responde
+  *"¿dónde estaba y cómo lo retomo?"* (la vista Audit sigue respondiendo *"¿qué tocó Claude?"*).
+  Diseño validado primero con un mockup interactivo con datos reales, portado tal cual.
+- **Qué muestra** (todo sale del propio `.jsonl` + `~/.claude/sessions/` + `settings.json`):
+  título AI (`ai-title`, el último gana) con fallback al primer prompt humano, últimos 2
+  `last-prompt` distintos, PRs (`pr-link` — si el PR ya mergeó, es la señal de "esta sesión ya
+  puede borrarse"), tamaño, `expires in Nd` (retención `cleanupPeriodDays`, default 30), y punto
+  **live** por proceso REAL (`/proc/<pid>`; `ps -p` sin procfs — `updatedAt` no se heartbeatea en
+  idle, solo es último recurso). `resumeCwd` = cwd del ÚLTIMO record (reanudes cross-carpeta
+  anclan bien). Filtros All/Live/Expiring/Junk (sin título o <20 KB), búsqueda, pin persistente
+  (se salta en bulk-clean y se poda al expirar la sesión), expansor por repo.
+- **Parser**: ahora lista TODAS las sesiones (`fileCount: 0` para solo-chat); Audit las filtra con
+  `auditRepos()` y queda idéntica. El report crudo duplica sesiones multi-raíz (Audit lo
+  necesita); la pestaña deduplica con `sessionRepos()` (dueño = repo del `resumeCwd`).
+- **Borrado a papelera** (segunda acción que muta disco, mismas reglas que el Clean):
+  `trash_session()` localiza transcript + carpeta hermana (subagentes/workflows) +
+  `file-history/` + `session-env/` y los manda a la papelera (`gio trash` / `~/.Trash`) — jamás
+  `rm`, jamás sesiones live, confirmación ámbar en la UI, dry-run por defecto en CLI
+  (`--trash-session <id>`, `--yes` ejecuta). NO se expone por HTTP: en navegador degrada a
+  `copy cmd`. Ids restringidos a `[A-Za-z0-9-]` y stems validados (un id `..` o un `...jsonl`
+  plantado no puede resolver fuera del claude root).
+- **Resume 1-click** (Tauri-only): `resume_in_terminal` en `src-tauri/src/terminal.rs` (clona el
+  patrón editor.rs: tabla de emuladores como dato, argv directo) — `$TERMINAL` → gnome-terminal →
+  kitty → alacritty → konsole → xfce4-terminal → xterm; macOS vía osascript/Terminal.app.
+- **Endurecido con revisión adversarial pre-merge** (5 dimensiones, 7 hallazgos confirmados y
+  corregidos): dedupe multi-repo, liveness macOS por `ps`, endpoint HTTP de trash **eliminado**
+  (una página hostil podía dispararlo con POST no-cors mientras corría `npm run dev`), validación
+  anti path-escape, bulk excluye pinned/live aunque se marcaran antes, truncados UTF-8-safe,
+  contadores de topbar por vista.
+- **Pendientes/diferidos documentados**: ramas macOS (trash a `~/.Trash`, Terminal.app) sin probar
+  en hardware; fallback de título ignora prompts cuyo content es array (imágenes); dedupe de
+  `prLinks` es por número (no por repo); el comando Tauri de trash es síncrono (podría ser async);
+  refresh sin guard de orden (report viejo puede pisar uno nuevo hasta el siguiente poll).
+
 ## Backlog de ideas (sin comprometer fase)
 
 Mejoras propuestas que NO están en el roadmap de fases. A discutir/priorizar antes de implementar;
@@ -200,7 +241,8 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
 
 - **Búsqueda / filtro en el sidebar** — filtrar el árbol por nombre de repo, de archivo o por
   contenido del diff. Mejora de navegación cuando hay muchos repos/sesiones. (Solo frontend:
-  `web/src/components/Sidebar.svelte`; no toca el parser.)
+  `web/src/components/Sidebar.svelte`; no toca el parser.) Nota: la pestaña Sessions (v0.2.0) ya
+  trae búsqueda propia por título/prompt/repo; esto sigue abierto para el árbol de Audit.
 - **Stats de cambios** — totales de líneas `+/-` por repo / sesión / día; quizá un mini-resumen en
   la topbar o un panel. Refuerza el ángulo de "auditoría". (El parser ya expone `added`/`removed`
   por archivo; sería agregación, posible en frontend o como campo nuevo en el contrato.)
@@ -209,8 +251,9 @@ todas deben respetar la honestidad del producto (no afirmar más de lo que el da
 - **Atajos de teclado** — navegar el árbol y abrir diffs sin ratón (j/k, enter, etc.). (Los atajos de
   **zoom** `Ctrl +/−/0` ya están; faltan los de navegación. Reusarían el mismo `keydown` global de
   `App.svelte` (`onKey`).)
-- **Worktree `Clean` (in-app)** — ✅ implementado (Tauri-only; la **única acción que muta disco** en arrow,
-  por eso va detrás de dry-run + confirmación explícita). Backend en `src-tauri/src/worktrees.rs`
+- **Worktree `Clean` (in-app)** — ✅ implementado (Tauri-only; una de las **dos acciones que mutan
+  disco** en arrow — la otra: el trash de sesiones de la pestaña Sessions, v0.2.0 — por eso va
+  detrás de dry-run + confirmación explícita). Backend en `src-tauri/src/worktrees.rs`
   (`remove_worktree`/`prune_worktrees` → `CleanupResult`, comandos Tauri `remove_worktree`/`prune_worktrees`
   que emiten `report-changed` al terminar). Blindaje aplicado: corre `git worktree remove` **sin `--force`**
   (git mismo rechaza un worktree locked/sucio/untracked — p.ej. el `.deb` sin trackear se salva), **nunca**

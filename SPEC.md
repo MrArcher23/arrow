@@ -90,6 +90,9 @@ Compartir el código del parser entre la CLI existente y el backend de Tauri (NO
      - Una sesión **sin** ediciones (sin `toolUseResult.filePath`) **no aparece**: arrow es un visor
        de archivos tocados, no un monitor de procesos; solo se lista al primer `Edit`/`Write`/`MultiEdit`
        (`src/main.rs` solo crea la sesión en la rama de cambio de archivo, no con metadatos sueltos).
+       **⚠ Superado en v0.2.0** (pestaña Sessions): el parser ahora lista TODAS las sesiones — las
+       solo-chat con `fileCount: 0` — y la vista Audit las filtra en el frontend (`auditRepos()`,
+       `web/src/lib/audit.ts`), conservando el comportamiento descrito aquí. Detalle en ROADMAP.md.
      - El refresco (polling + watcher) **cortocircuita el re-render** cuando el report no cambia
        (`if (txt === lastJson) return`); como `relative()`/`isLive()` solo se recalculan al
        re-renderizar, el `"Nm ago"` y el punto verde se **congelaban** hasta que una edición moviera

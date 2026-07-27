@@ -20,6 +20,9 @@ arrow es **un solo código** que se ajusta al sistema operativo al arrancar (no 
 | **font-weight** | `350` (compensa el render pesado de WebKitGTK) | peso **normal** (WKWebView ya lo renderiza bien) |
 | **Fuente de datos** | `~/.claude/projects` vía `$HOME` | igual — en Mac `$HOME` siempre existe → **zero-config** |
 | **Bundle** | `.deb` + `.AppImage` | `.app` + `.dmg` (se piden por CLI) |
+| **Papelera (pestaña Sessions)** | `gio trash` | `mv` a `~/.Trash` (con sufijo si colisiona) |
+| **Resume en terminal** | `$TERMINAL` → gnome-terminal → kitty → … | `osascript` + Terminal.app |
+| **Sesión live (proceso)** | `/proc/<pid>` | `ps -p <pid>` (no hay procfs) |
 
 Dónde vive cada ajuste (por si hay que tocarlo):
 - **Detección de plataforma:** `web/src/lib/platform.ts` (`isMac`/`isWindows`/`isLinux` +
@@ -145,10 +148,13 @@ instalador de un comando:
 ## Estado
 
 - ✅ Código adaptado a macOS (titlebar nativa + font-weight por OS).
-- 🟡 **Matrix de CI lista** (arm64 + x64 en `release.yml`) + `install.sh` (one-liner): **escritos pero
-  aún no ejecutados** — el primer tag `v*` publicará los `.dmg`.
+- ✅ **Matrix de CI ejecutada** (v0.2.0): el `.dmg` **arm64 (Apple Silicon) ya se publica** en cada
+  tag. 🟡 El job Intel (`macos-13`) quedó **en cola sin runner** — GitHub está retirando esos
+  runners — así que el `.dmg` x64 de v0.2.0 no se publicó. Alternativa a evaluar: compilar x64
+  desde el runner arm64 con `--target x86_64-apple-darwin` (o soltar Intel).
 - ⏳ **Sin verificar en una Mac todavía:** el bloque `cfg(target_os = "macos")` solo se activa al
-  compilar en macOS. Falta correr un tag real y confirmar en una Mac el look de la titlebar, que el
-  `.dmg` monta y que `install.sh` deja la app en `/Applications`.
+  compilar en macOS. Falta confirmar en una Mac real el look de la titlebar, que el `.dmg` monta,
+  que `install.sh` deja la app en `/Applications`, y las dos ramas nuevas de la pestaña Sessions
+  (v0.2.0): el borrado a `~/.Trash` y el resume vía `osascript`/Terminal.app.
 - ⏳ **Firma/notarización** (Apple Developer, ~99 USD/año) y **Homebrew Cask** siguen pendientes
   (backlog del [ROADMAP.md](ROADMAP.md)).

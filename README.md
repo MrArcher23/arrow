@@ -16,12 +16,14 @@ opening an IDE, without AI chat, and **without depending on git or hooks**.
 > Status: **Phase 2 complete + polish — released on Linux
 > ([v0.2.0](https://github.com/MrArcher23/arrow/releases/latest))**. A desktop app (Tauri 2.x) with
 > the Rust parser as its native backend, **already usable day to day** on Linux (`.deb` + AppImage).
-> Phases 0 (parser/CLI), 1 (web UI) and 2 (packaging) are complete; since then: 20 parser tests, a
+> Phases 0 (parser/CLI), 1 (web UI) and 2 (packaging) are complete; since then: 36 parser tests, a
 > resilient watcher, zoom, a custom titlebar, active-session focus, live diff-panel refresh,
 > open-in-editor (jump from a diff straight into your editor at the first change), files
 > ordered by most-recent edit (with relative times that age in place via a clock tick), macOS
-> adaptation, and a robust diff-"before" reconstruction (shows a real diff even on Claude Code's
-> `originalFile: null` edits, instead of mislabeling an edited file as new). Phases 3 (honesty + git)
+> adaptation, a robust diff-"before" reconstruction (shows a real diff even on Claude Code's
+> `originalFile: null` edits, instead of mislabeling an edited file as new), and — new in v0.2.0 —
+> a **[Sessions tab](#sessions-tab-v020)**: browse every Claude Code session across your repos,
+> copy its id or resume command, and clean sessions up to the system trash. Phases 3 (honesty + git)
 > and 4 (editing) are pending — details in [ROADMAP.md](ROADMAP.md).
 
 ## Install (Linux)
@@ -117,7 +119,9 @@ is a git repo: it does not attribute by author or by session, and many repos are
   marked with ⚠.
 - The JSONL format is **internal, undocumented, changes between versions, and auto-deletes at ~30
   days** (`cleanupPeriodDays`). Hence the defensive parsing: an invalid line is skipped, never
-  crashing.
+  crashing. The Sessions tab surfaces that expiry honestly (*"expires in Nd"*).
+- Deleting a session is reversible by construction: artifacts go to the **system trash**, never
+  `rm`, and a session a running `claude` process has registered is refused outright.
 
 ## Usage
 
@@ -138,11 +142,16 @@ cargo build --release
 
 # Is there a newer arrow release? (network; read-only, never installs)
 ./target/release/arrow --check-update
+
+# What would trashing a session remove? (dry-run; add --yes to actually trash)
+./target/release/arrow --trash-session 14385fed
 ```
 
 Options: `--projects-dir <path>` (defaults to `~/.claude/projects`), `--repo`, `--session`,
-`--list`, `--json`, `--check-update`, and `--content --file <path> [--session <id>]` (emits `{before, after}` for a
-file, for the UI's diff view).
+`--list`, `--json`, `--check-update`, `--content --file <path> [--session <id>]` (emits `{before, after}` for a
+file, for the UI's diff view), and `--trash-session <id> [--yes]` (send a session's artifacts to
+the **system trash** — dry-run without `--yes`, never `rm`, refuses a session a running `claude`
+process has registered).
 
 ## Web UI (Phase 1)
 
@@ -206,9 +215,10 @@ cargo tauri build
   flagged **active / stale (≥10 min no edits) / merged → safe to remove**, with on-demand disk sizes.
   Each row offers `copy cmd` (the exact `git worktree remove` for *you* to run) and, in the desktop app,
   a **`Clean`** button that runs it for you — `git worktree remove` **without `--force`** (so git refuses
-  a locked or dirty worktree), gated behind a dry-run and a confirmation. It's the only action in arrow
-  that mutates disk, and it's offered only on rows git would actually clean (merged+clean, or a phantom
-  to prune) — never the main, dirty, locked, or active worktree. Honest by construction: "merged" is
+  a locked or dirty worktree), gated behind a dry-run and a confirmation. It's one of only two actions
+  in arrow that mutate disk (the other: sending a session to the system trash from the
+  [Sessions tab](#sessions-tab-v020)), and it's offered only on rows git would actually clean
+  (merged+clean, or a phantom to prune) — never the main, dirty, locked, or active worktree. Honest by construction: "merged" is
   shown only when the branch is provably an ancestor of the repo's (dynamically resolved) default branch
   — a squash/rebase merge reads as *can't confirm*, never a false green; "active" means recent edits on
   disk, not a running process; sizes are approximate. All git shelling stays in the Tauri backend, so the
@@ -226,11 +236,36 @@ cargo tauri build
 The parser lives in a **library** (`src/lib.rs`): pure functions `build_report(projects_dir)` and
 `file_content(projects_dir, file, session)` + the serializable structs. Two frontends consume it:
 `src/main.rs` (the CLI, with flags intact) and `src-tauri/` (the desktop backend). Zero duplicated
-logic; the same source of truth for terminal, web, and native app. The parser ships **20 unit tests**
+logic; the same source of truth for terminal, web, and native app. The parser ships **36 unit tests**
 (`cargo test`) over fixture transcripts in a tempdir, covering the non-obvious parts: defensive
 parsing, top-level transcripts only, grouping by git root, `+/−` counting, filtering of
-`~/.claude/`, recency ordering (repos, sessions, and files within a session), and the diff-"before" reconstruction cascade (inline `originalFile`,
-reverse-applied patches, full-`Read` snapshot, create → new file, and drift → honestly unavailable).
+`~/.claude/`, recency ordering (repos, sessions, and files within a session), the diff-"before" reconstruction cascade (inline `originalFile`,
+reverse-applied patches, full-`Read` snapshot, create → new file, and drift → honestly unavailable),
+and the Sessions metadata + trash safety (chat-only listing, `resumeCwd` anchoring, retention,
+charset-validated ids that can't escape the claude root, and the live-session guard).
+
+## Sessions tab (v0.2.0)
+
+A second tab next to the audit view. Audit answers *"what did Claude touch?"*; **Sessions** answers
+*"where was I, and how do I pick that session back up?"* — every repo with Claude Code history,
+each session with its AI-generated title, its last two prompts, linked PRs (from the transcript's
+`pr-link` records), size, a retention countdown (from `cleanupPeriodDays`, default ~30
+days), and a **live** dot for sessions a running `claude` process has registered — checked against
+the real process (`/proc`, or `ps -p` where procfs doesn't exist), not just a timestamp.
+
+- **Resume anywhere**: copy the session id, or a ready-to-paste
+  `cd '<cwd>' && claude --resume <id>` — anchored to the cwd of the session's **last** record, so a
+  session that moved directories mid-way resumes in the right place. The desktop app can also open
+  your terminal straight into the session (`resume` — `$TERMINAL`, gnome-terminal, kitty, and
+  friends on Linux; Terminal.app on macOS).
+- **Clean up**: filters for junk (untitled or < 20 KB) and expiring sessions, search across titles
+  and prompts, pins that protect a session from bulk cleaning, and per-row or bulk delete — always
+  to the **system trash** (`gio trash` on Linux, `~/.Trash` on macOS), never `rm`, always behind an
+  explicit confirmation, and never for a live session. Deleting removes the transcript, its
+  subagent logs, and its `file-history` / `session-env` artifacts — all recoverable from the trash.
+- **Mutation stays in the desktop app** (same rule as the worktree Clean): deleting is never
+  exposed over HTTP, so in the browser build the UI hands you the exact
+  `arrow --trash-session <id> --yes` command to run yourself.
 
 ## Roadmap
 
