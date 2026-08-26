@@ -1,6 +1,6 @@
 [package]
 name = "arrow"
-version = "0.2.3"
+version = "0.3.0"
 edition = "2021"
 description = "Audita qué archivos tocó Claude Code y con qué diff, leyendo sus datos nativos (~/.claude/projects) — sin hooks, sin git."
 license = "MIT"
