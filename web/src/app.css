@@ -1,3 +1,8 @@
+/* Appearance tokens. The DARK palette is the bare-:root default — it is what arrow has
+   always shipped, so anything that fails to stamp an appearance keeps today's look. The
+   light palette only redefines the tokens under [data-theme='light'].
+   The attribute is stamped by lib/appearance.ts, and pre-stamped by an inline script in
+   index.html so a cold start never paints the wrong ground before the CSS resolves. */
 :root {
   --bg: #0d1117;
   --panel: #11161d;
@@ -9,12 +14,87 @@
   --red: #f85149;
   --warn: #d29922;
   --hover: #1c2330;
-  --active: #1f6feb33;
   --chip: #1c2330;
+  /* Solid, not alpha: an alpha selection composited differently over --bg and --panel.
+     This value is the exact composite of the previous #1f6feb33 over --bg. */
+  --active: #112441;
+
+  /* Text drawn ON a solid semantic fill (--green/--warn/--red/--accent chips and
+     buttons). It FLIPS between themes: black wins on the dark palette's bright fills,
+     white wins on the light palette's darker ones. Never hardcode #000/#fff for these. */
+  --on-accent: #000;
+  /* Muted fills for states that must stay READABLE, not just dimmed. A blanket
+     `opacity` composites the label INTO the fill, and because --on-accent flips, the
+     result degrades differently per theme — worst on light, where a washed amber and a
+     white label converge. These give the fill a per-theme muted value so the label can
+     stay at full --on-accent. --warn-dim: in-flight destructive buttons ("Running…",
+     "moving 3/12 to trash…"). --green-hover: hover on a solid green fill. */
+  --warn-dim: #a8842f;
+  --green-hover: #4ac45e;
+
+  /* Banner grounds. Exact composites of the former 6%-alpha tints over --bg, so the dark
+     theme is pixel-identical to what shipped before they became tokens. */
+  --add-bg: #101b1a;
+  --del-bg: #1b151a;
+  --warn-bg: #191918;
+
+  /* Depth. Tokenized because a black shadow reads as "depth" on dark but as "dirt" on
+     light, where it must be softer and tinted toward the foreground. */
+  --scrim: rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 18px 50px rgba(0, 0, 0, 0.5);
+  --shadow-up: 0 -6px 20px rgba(0, 0, 0, 0.4);
+  /* The `live` dot. An emissive glow is a dark-only idiom; on light it turns into a
+     blurry halo, so the light theme uses a flat ring instead. */
+  --dot-glow: 0 0 6px var(--green);
+
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   color-scheme: dark;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Light palette, derived from GitHub Light — the mirror of the GitHub-Dark-derived
+   values above. The four semantic colors are RE-AUTHORED, not reused: the dark
+   --green/--warn/--accent sit at ~2.5:1 on white and would make the `live` dot, the ⚠
+   userModified marker and the expiry countdown fade out. Every text pair here clears
+   WCAG AA 4.5:1 (see scripts/check-contrast.mjs). */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --panel: #f6f8fa;
+  --border: #d0d7de;
+  --fg: #1f2328;
+  --dim: #59636e;
+  --accent: #0550ae;
+  --green: #116329;
+  --red: #cf222e;
+  --warn: #7d5300;
+  --hover: #eaeef2;
+  --chip: #eaeef2;
+  --active: #ddf4ff;
+
+  --on-accent: #ffffff;
+  /* Muted DOWN, never up: lightening an amber fill under a white label is what breaks
+     the in-flight state on this side. */
+  --warn-dim: #7d6a45;
+  --green-hover: #0d5c2a;
+
+  --add-bg: #dafbe1;
+  --del-bg: #ffebe9;
+  --warn-bg: #fff8c5;
+
+  --scrim: rgba(31, 35, 40, 0.35);
+  --shadow-md: 0 6px 16px rgba(31, 35, 40, 0.12);
+  --shadow-lg: 0 10px 28px rgba(31, 35, 40, 0.14);
+  --shadow-xl: 0 18px 40px rgba(31, 35, 40, 0.18);
+  --shadow-up: 0 -6px 18px rgba(31, 35, 40, 0.1);
+  --dot-glow: 0 0 0 3px rgba(17, 99, 41, 0.22);
+
+  /* Drives what CSS cannot reach: scrollbars, the Sessions search input's native
+     affordances, the bulk checkboxes, and OpenInEditor's <select> popup. Leaving this
+     at `dark` under a white chrome is the most visible half-themed artifact there is. */
+  color-scheme: light;
 }
 
 /* WebKitGTK (Tauri/Linux) renderiza ~100 unidades más pesado: pedimos un escalón más
@@ -44,7 +124,15 @@ button {
   font-weight: inherit;
 }
 
-/* Colores de los chunks de @codemirror/merge */
+/* Colores de los chunks de @codemirror/merge.
+   These stay ALPHA and stay hardcoded on purpose. They paint INSIDE the editor, whose
+   background comes from the independently chosen CodeMirror theme (themes.ts) — not from
+   the chrome tokens above — so a user can pair a light chrome with Dracula, or a dark
+   chrome with GitHub Light. Alpha is the only thing that self-adapts across 15+ editor
+   backgrounds; per-chrome-theme tokens would break the mixed combinations.
+   They also override @codemirror/merge's own baseTheme deliberately: it tints changed
+   lines beige (rgba(160,128,100,.08)) and marks changed text with a 2px underline, which
+   loses arrow's red = removed / green = added semantics. */
 .cm-merge-a .cm-changedLine,
 .cm-deletedChunk {
   background: #f8514922 !important;

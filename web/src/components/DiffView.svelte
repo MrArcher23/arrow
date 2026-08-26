@@ -7,7 +7,7 @@
   import { EditorState, StateField, StateEffect } from '@codemirror/state'
   import type { Extension, Range } from '@codemirror/state'
   import type { FileContent } from '../lib/types'
-  import { themeExt } from '../lib/themes'
+  import { themeExt, THEMES } from '../lib/themes'
   import { resolveLanguage } from '../lib/highlight'
 
   interface Props {
@@ -16,6 +16,11 @@
     themeId: string
   }
   let { content, loading, themeId }: Props = $props()
+
+  // The editor's polarity is chosen INDEPENDENTLY of the chrome's (a light chrome with a
+  // dark editor is a valid pairing), but `color-scheme` is inherited — so without this the
+  // editor's scrollbars would follow the chrome and frame a dark diff in light UA chrome.
+  let editorDark = $derived(THEMES.find((t) => t.id === themeId)?.dark ?? true)
 
   let host = $state<HTMLDivElement>()
   let view: { destroy(): void } | null = null
@@ -267,6 +272,7 @@
   <div
     class="diff-host"
     class:single={mode === 'created' || mode === 'deleted' || mode === 'unknown'}
+    style:color-scheme={editorDark ? 'dark' : 'light'}
     bind:this={host}
   ></div>
 
@@ -293,15 +299,15 @@
   }
   .banner.created {
     color: var(--green);
-    background: #3fb9500f;
+    background: var(--add-bg);
   }
   .banner.deleted {
     color: var(--red);
-    background: #f851490f;
+    background: var(--del-bg);
   }
   .banner.unknown {
-    color: #d29922;
-    background: #d299220f;
+    color: var(--warn);
+    background: var(--warn-bg);
   }
   .diff-host {
     flex: 1;
@@ -361,7 +367,7 @@
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 6px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-md);
     font-size: 12px;
   }
   .find-input {

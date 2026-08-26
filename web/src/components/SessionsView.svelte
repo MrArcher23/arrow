@@ -590,7 +590,7 @@
   }
   .chipbtn.danger:hover:not(:disabled) {
     background: var(--warn);
-    color: #000;
+    color: var(--on-accent);
     border-color: var(--warn);
   }
   .chipbtn.pinned {
@@ -670,7 +670,7 @@
     border-radius: 50%;
     background: var(--green);
     flex: none;
-    box-shadow: 0 0 6px var(--green);
+    box-shadow: var(--dot-glow);
   }
   .star {
     color: var(--warn);
@@ -831,12 +831,17 @@
     border-radius: 6px;
     padding: 2px 10px;
     cursor: pointer;
-    color: #000;
+    color: var(--on-accent);
     background: var(--warn);
     border: 1px solid var(--warn);
   }
+  /* Muted FILL, not blanket opacity: this state carries the in-flight label ("Running…",
+     "moving 3/12 to trash…") for a destructive action, so the text must stay readable.
+     `opacity` would composite the label into the fill, and since --on-accent flips per
+     theme, the light side washed out to 2.4:1. */
   .go:disabled {
-    opacity: 0.6;
+    background: var(--warn-dim);
+    border-color: var(--warn-dim);
     cursor: default;
   }
   .cancel {
@@ -883,7 +888,7 @@
     align-items: center;
     gap: 10px;
     font-size: 12px;
-    box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-up);
   }
   .bulk-note {
     color: var(--dim);

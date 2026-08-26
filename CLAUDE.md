@@ -102,6 +102,18 @@ más la **pestaña Sessions** (v0.2.0): navegar, retomar (`claude --resume`) y l
 - Formato JSONL **interno, no documentado, volátil, se auto-borra a ~30 días** → **parsing defensivo**:
   una línea inválida se ignora, nunca rompe (parse a `serde_json::Value`, no a structs rígidos).
 - `git diff` es solo **vista secundaria** opcional (muchos repos no son git; no atribuye por sesión).
+- **Apariencia del chrome (light/dark)**: `app.css` define la paleta DOS veces — dark en `:root`
+  (default) y light en `:root[data-theme='light']`. `data-theme` lo estampa `web/src/lib/appearance.ts`
+  (aislado como `zoom.ts`/`window.ts`) + un guard pre-paint en `web/index.html` (evita el flash blanco:
+  WebKitGTK pinta el webview de blanco opaco por defecto). **Es distinto del menú `Themes`**, que temea
+  solo el EDITOR (`themes.ts`, extensiones CM6): chrome y editor se eligen por separado a propósito.
+  Al tocar colores: usa tokens, NUNCA literales. `--on-accent` **flipea** (negro en dark, blanco en
+  light) — es el texto sobre relleno semántico sólido. Los `!important` de `.cm-merge-*` y los
+  `#d29922XX` de `.cm-arrow-match` se quedan en alpha hardcodeado a propósito: pintan DENTRO del editor,
+  cuyo fondo lo pone el tema de CM, no el chrome. Verificar con `npm --prefix web run check:contrast`
+  (único check mecánico: el frontend no tiene test runner). No hay modo "System" y no es un descuido:
+  en Linux `prefers-color-scheme` sigue la variante del tema GTK, no la preferencia del usuario, y falla
+  en silencio (ver ROADMAP).
 - La capa de fetch del frontend vive aislada en `web/src/lib/api.ts` (ya dual-mode: Tauri `invoke()`
   dentro de la app, `fetch` en el navegador, detectado por `__TAURI_INTERNALS__`). No acoplar
   componentes Svelte al transporte: cualquier cambio de transporte se hace solo en `api.ts`.

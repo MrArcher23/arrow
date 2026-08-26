@@ -16,7 +16,7 @@ opening an IDE, without AI chat, and **without depending on git or hooks**.
 > Status: **Phase 2 complete + polish — released on Linux
 > ([v0.2.3](https://github.com/MrArcher23/arrow/releases/latest))**. A desktop app (Tauri 2.x) with
 > the Rust parser as its native backend, **already usable day to day** on Linux (`.deb` + AppImage).
-> Phases 0 (parser/CLI), 1 (web UI) and 2 (packaging) are complete; since then: 36 parser tests, a
+> Phases 0 (parser/CLI), 1 (web UI) and 2 (packaging) are complete; since then: 38 parser tests, a
 > resilient watcher, zoom, a custom titlebar, active-session focus, live diff-panel refresh,
 > open-in-editor (jump from a diff straight into your editor at the first change), files
 > ordered by most-recent edit (with relative times that age in place via a clock tick), macOS
@@ -24,7 +24,9 @@ opening an IDE, without AI chat, and **without depending on git or hooks**.
 > `originalFile: null` edits, instead of mislabeling an edited file as new), and — new in v0.2.0 —
 > a **[Sessions tab](#sessions-tab-v020)**: browse every Claude Code session across your repos,
 > copy its id or resume command, and clean sessions up to the system trash. Phases 3 (honesty + git)
-> and 4 (editing) are pending — details in [ROADMAP.md](ROADMAP.md).
+> and 4 (editing) are pending — details in [ROADMAP.md](ROADMAP.md). Newest: a
+> **[light/dark appearance](#appearance-lightdark)** for the app itself, separate from the editor's
+> syntax theme.
 
 ## Install (Linux)
 
@@ -236,7 +238,7 @@ cargo tauri build
 The parser lives in a **library** (`src/lib.rs`): pure functions `build_report(projects_dir)` and
 `file_content(projects_dir, file, session)` + the serializable structs. Two frontends consume it:
 `src/main.rs` (the CLI, with flags intact) and `src-tauri/` (the desktop backend). Zero duplicated
-logic; the same source of truth for terminal, web, and native app. The parser ships **36 unit tests**
+logic; the same source of truth for terminal, web, and native app. The parser ships **38 unit tests**
 (`cargo test`) over fixture transcripts in a tempdir, covering the non-obvious parts: defensive
 parsing, top-level transcripts only, grouping by git root, `+/−` counting, filtering of
 `~/.claude/`, recency ordering (repos, sessions, and files within a session), the diff-"before" reconstruction cascade (inline `originalFile`,
@@ -269,6 +271,27 @@ the real process (`/proc`, or `ps -p` where procfs doesn't exist), not just a ti
 - **Mutation stays in the desktop app** (same rule as the worktree Clean): deleting is never
   exposed over HTTP, so in the browser build the UI hands you the exact
   `arrow --trash-session <id> --yes` command to run yourself.
+
+
+## Appearance (light/dark)
+
+The app chrome — topbar, sidebar, Sessions, modals — follows its own light/dark setting, toggled from
+the topbar and remembered across launches. It is **deliberately separate from the `Themes` menu**,
+which picks the *editor's* syntax theme: pairing a light chrome with a dark editor (or the reverse) is
+a valid choice, not a mistake, so arrow does not couple them. On first run the appearance is seeded
+from the polarity of the editor theme you already picked, so nobody upgrades into a mismatch.
+
+There is **no "System" option, and that is on purpose.** Inside a Tauri window on Linux,
+`prefers-color-scheme` tracks whether your GTK theme *has* a light variant rather than the color
+scheme you actually chose — under a dark-only theme it stays pinned to dark and never fires a change
+event. Shipping a "System" toggle on top of that would be a switch that silently does nothing, which
+is exactly the kind of thing arrow refuses to do. Following the OS honestly needs a polled read of the
+XDG portal; it is written up in [ROADMAP.md](ROADMAP.md).
+
+Both palettes are gated on contrast: `npm --prefix web run check:contrast` parses the two palette
+blocks straight out of `web/src/app.css` and asserts WCAG 2 ratios on every pair the components
+actually render, so the `live` dot, the ⚠ `userModified` marker and the expiry countdown cannot go
+quietly unreadable on either side.
 
 ## Roadmap
 
