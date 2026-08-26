@@ -8,7 +8,10 @@
   --panel: #11161d;
   --border: #21262d;
   --fg: #c9d1d9;
-  --dim: #6e7681;
+  /* GitHub Dark's fg.muted. The previous #6e7681 sat below WCAG AA on every ground it
+     touched (4.12:1 on --bg, 3.38:1 on --active) — muted text carries paths, timestamps
+     and prompt previews, so it has to be readable, not just quiet. */
+  --dim: #8b949e;
   --accent: #58a6ff;
   --green: #3fb950;
   --red: #f85149;

@@ -279,10 +279,12 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
   bloques de paleta de `app.css` (sin tabla de colores duplicada) y verifica WCAG 2 sobre los pares que
   de verdad ocurren en los componentes. Es la única verificación mecánica posible: el frontend **no
   tiene test runner** (`package.json` solo trae dev/build/preview).
-- **Deuda descubierta y registrada**: `--dim #6e7681` **ya fallaba AA en el tema oscuro publicado**
-  (4.12:1 sobre `--bg`, 3.38:1 sobre `--active`). El gate lo registra en `KNOWN_BELOW_AA` con el ratio
-  actual como **piso** (no puede empeorar en silencio) en vez de ocultarlo. Subirlo es un cambio visual
-  deliberado a un tema ya publicado — **pendiente de decisión**. El lado claro pasa los 27 checks.
+- **Deuda descubierta y SALDADA**: `--dim #6e7681` ya fallaba AA en el tema oscuro publicado
+  (4.12:1 sobre `--bg`, 3.38:1 sobre `--active`) — el texto atenuado lleva rutas, timestamps y
+  previews de prompt, así que tiene que leerse. Subido a `#8b949e` (el `fg.muted` de GitHub Dark):
+  5.05–6.15:1 sobre todos los fondos que toca. Es un cambio visual deliberado a un tema ya publicado,
+  decidido para este release. Con eso el gate no necesita excepciones: los **47 pares** pasan AA en
+  ambas polaridades con umbral duro.
 - **Revisión adversarial post-implementación** (9 revisores por componente + verificación 1:1;
   23 candidatos → **6 confirmados**, todos corregidos). Causa raíz compartida por 4 de los 6: el gate
   nacía con un **supuesto falso** — asumía que los colores semánticos solo se pintan sobre `--bg`/

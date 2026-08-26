@@ -48,18 +48,6 @@ const TEXT_PAIRS = [
 // Non-text, but state-bearing: the `live` dot has to stay findable against its ground.
 const UI_PAIRS = [['green', 'bg'], ['green', 'panel']]
 
-// Pre-existing debt, recorded rather than hidden. --dim in the DARK palette has shipped
-// below AA since before this gate existed; the light palette clears it comfortably
-// (5.2-6.1:1). These entries pin today's ratios as a floor: the gate still fails if any
-// of them gets WORSE, so the debt cannot deepen silently. Raising --dim to a passing
-// value is a deliberate visual change to a released theme — see ROADMAP.
-const KNOWN_BELOW_AA = {
-  'dark:dim/bg': 4.12,
-  'dark:dim/panel': 3.95,
-  'dark:dim/hover': 3.43,
-  'dark:dim/active': 3.38,
-  'dark:dim/chip': 3.43,
-}
 
 function parsePalettes(rawCss) {
   // Strip comments first: the palette comments legitimately mention token names like
@@ -114,14 +102,9 @@ for (const [label, palette] of [['dark', dark], ['light', light]]) {
       return
     }
     const ratio = contrast(palette[fg], palette[bg])
-    const floor = KNOWN_BELOW_AA[`${label}:${fg}/${bg}`]
-    // A known-below-AA pair is held to its recorded ratio instead of the AA threshold.
-    const effectiveMin = floor !== undefined ? floor - 0.005 : min
-    const ok = ratio >= effectiveMin
+    const ok = ratio >= min
     if (!ok) failed++
-    const mark = ok ? (floor !== undefined ? 'debt' : 'ok  ') : 'FAIL'
-    const needs = floor !== undefined ? `known debt, floor ${floor}` : `${kind} needs ${min}`
-    console.log(`  ${mark} --${fg} on --${bg}: ${ratio.toFixed(2)}:1 (${needs})`)
+    console.log(`  ${ok ? 'ok  ' : 'FAIL'} --${fg} on --${bg}: ${ratio.toFixed(2)}:1 (${kind} needs ${min})`)
   }
   for (const [fg, bg] of TEXT_PAIRS) check(fg, bg, TEXT_MIN, 'text')
   for (const [fg, bg] of UI_PAIRS) check(fg, bg, UI_MIN, 'ui')
