@@ -128,7 +128,7 @@
   .open {
     font: inherit;
     font-size: 11px;
-    color: #000;
+    color: var(--on-accent);
     background: var(--green);
     border: 1px solid var(--green);
     border-radius: 6px;
@@ -136,8 +136,11 @@
     cursor: pointer;
     flex: none;
   }
+  /* Moves the fill AWAY from the panel instead of fading it toward it: on light, an
+     opacity wash lightened the green under a white label down to 4.25:1. */
   .open:hover {
-    opacity: 0.9;
+    background: var(--green-hover);
+    border-color: var(--green-hover);
   }
   .hint {
     color: var(--dim);
@@ -154,7 +157,7 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-lg);
   }
   .title {
     font-weight: 700;

@@ -239,6 +239,102 @@ están en [CLAUDE.md](CLAUDE.md); el contrato de datos en [SPEC.md](SPEC.md).
   `prLinks` es por número (no por repo); el comando Tauri de trash es síncrono (podría ser async);
   refresh sin guard de orden (report viejo puede pisar uno nuevo hasta el siguiente poll).
 
+### Apariencia light/dark del chrome (rama `feat/light-dark-chrome`)
+
+- **El dolor**: el menú `Themes` de la topbar solo temea el **editor** (14 extensiones CM6 de
+  `@uiw/codemirror-themes-all`); el chrome (topbar, sidebar, Sessions, modales) estaba clavado a una
+  paleta oscura fija en `app.css`. Elegir *GitHub Light* daba un editor claro dentro de una cáscara negra.
+- **Descartado: derivar el chrome DEL tema de CodeMirror.** Mecánicamente es posible (los 14 temas
+  exportan `defaultSettings*`), pero de los 12 tokens de arrow solo sobreviven **2**: `gutterBackground`
+  es byte-idéntico a `background` en 12/12 (⇒ `--panel` no existe), el único valor de `gutterBorder` en
+  los 14 temas es `transparent` (⇒ `--border` tampoco), y no hay campo alguno para `--green`/`--red`/
+  `--warn`/`--chip`. Tirar de los estilos de sintaxis es peor: `inserted` es **rojo** en materialDark y
+  `deleted` es **verde** en gruvboxDark ⇒ pintaría "líneas añadidas" en rojo, rompiendo la honestidad
+  del diff. Casos extremos: `vscodeDark.foreground` es `#9cdcfe` (azul de nombre-de-variable) y
+  `androidstudio.caret` es `#00FF00` (chocaría con el verde semántico).
+- **Implementado**: paleta propia con dos bloques en `app.css` — dark en `:root` (default, lo que arrow
+  ya enviaba) y light bajo `:root[data-theme='light']`, derivada de GitHub Light. `data-theme` lo estampa
+  `web/src/lib/appearance.ts` (misma convención aislada que `zoom.ts`/`window.ts`), con **semilla de
+  primer arranque desde la polaridad del `arrow.theme` ya guardado** (quien tuviera GitHub Light no
+  actualiza al mismo desajuste). Control propio en la topbar: `AppearanceToggle.svelte` (segmentado
+  sol/luna, hermano visual del widget de zoom), **separado** del menú `Themes` del editor.
+- **Tokens nuevos**: `--on-accent` (texto sobre relleno semántico sólido; **flipea** — negro en dark,
+  blanco en light, los 5 `color:#000` de badges no eran un swap mecánico), `--add-bg`/`--del-bg`/
+  `--warn-bg` (los tintes de banner de-alfados; los valores dark son el composite EXACTO del alpha
+  anterior sobre `--bg`, así que el dark queda pixel-idéntico), `--scrim`, `--shadow-{md,lg,xl,up}` y
+  `--dot-glow` (el glow emisivo del punto `live` es idioma dark-only; en claro pasa a anillo plano).
+  `--active` deja de ser alpha y pasa a sólido (sobre `--panel` cambia de forma imperceptible).
+- **Flash blanco al arrancar (bug preexistente, arreglado)**: `tauri.conf.json` no define
+  `backgroundColor` ⇒ wry nunca llama `set_background_color` ⇒ el fondo por defecto de WebKitGTK es
+  **blanco opaco**, y `app.css` llega como `<link>` bloqueante. Guard pre-paint en `web/index.html`
+  (inline `<style>` + `<script>` síncrono que lee `arrow.appearance`): cero ACL, cero Rust.
+- **Los `!important` de `.cm-merge-*` en `app.css` se MANTIENEN** (se evaluó borrarlos y es peor): el
+  `baseTheme` de `@codemirror/merge` tiñe las líneas cambiadas de beige `rgba(160,128,100,.08)` y marca
+  el texto con un subrayado de 2px, perdiendo la semántica rojo=eliminado / verde=añadido. Siguen en
+  alpha y hardcodeados a propósito: pintan DENTRO del editor, cuyo fondo lo pone el tema de CM elegido,
+  no el chrome ⇒ el alpha es lo único que se auto-adapta a 27 fondos de editor distintos.
+- **+13 temas de editor claros** (`themes.ts`): ya estaban instalados en el barrel y sin exponer. Sin
+  ellos, un chrome claro solo tenía 2 editores que combinaran contra 12 oscuros.
+- **Gate de contraste** (`web/scripts/check-contrast.mjs`, `npm run check:contrast`): parsea los dos
+  bloques de paleta de `app.css` (sin tabla de colores duplicada) y verifica WCAG 2 sobre los pares que
+  de verdad ocurren en los componentes. Es la única verificación mecánica posible: el frontend **no
+  tiene test runner** (`package.json` solo trae dev/build/preview).
+- **Deuda descubierta y SALDADA**: `--dim #6e7681` ya fallaba AA en el tema oscuro publicado
+  (4.12:1 sobre `--bg`, 3.38:1 sobre `--active`) — el texto atenuado lleva rutas, timestamps y
+  previews de prompt, así que tiene que leerse. Subido a `#8b949e` (el `fg.muted` de GitHub Dark):
+  5.05–6.15:1 sobre todos los fondos que toca. Es un cambio visual deliberado a un tema ya publicado,
+  decidido para este release. Con eso el gate no necesita excepciones: los **47 pares** pasan AA en
+  ambas polaridades con umbral duro.
+- **Revisión adversarial post-implementación** (9 revisores por componente + verificación 1:1;
+  23 candidatos → **6 confirmados**, todos corregidos). Causa raíz compartida por 4 de los 6: el gate
+  nacía con un **supuesto falso** — asumía que los colores semánticos solo se pintan sobre `--bg`/
+  `--panel`, y es mentira: van sobre `--hover`, `--active` y `--chip` en `Sidebar` (⚠ flag y `+N` de la
+  fila de archivo), `SessionsView` (countdown de expiración, ★ pin, chips de PR) y `WorktreesModal`
+  (flags de estado de fila). En claro caían a 4.17–4.46:1 **justo al pasar el puntero por encima** —
+  la señal se degradaba precisamente cuando el usuario la mira. Correcciones:
+  - Semánticos light oscurecidos un paso: `--green` `#1a7f37`→`#116329`, `--warn` `#9a6700`→`#7d5300`,
+    `--accent` `#0969da`→`#0550ae` (el `--red` ya aguantaba). Ahora despejan AA sobre TODOS los fondos
+    que tocan de verdad. El anillo de `--dot-glow` se re-ancló al verde nuevo.
+  - Gate ampliado de 27 a **47 pares** (los 4 semánticos × `hover`/`active`/`chip`) y el comentario
+    falso corregido en el propio script, para que el supuesto no vuelva a colarse.
+  - **`opacity` sobre rellenos semánticos**: `.go:disabled` (WorktreesModal + SessionsView) y
+    `.open:hover` (VersionBadge) atenuaban el elemento ENTERO, componiendo la etiqueta dentro del
+    relleno. Como `--on-accent` flipea, el resultado se degradaba distinto por tema: en claro el
+    "moving 3/12 to trash…" (el único feedback en curso de un borrado destructivo) caía a **2.4:1**.
+    Sustituido por rellenos atenuados con token propio (`--warn-dim`, `--green-hover`), definidos por
+    tema y **atenuados hacia el lado correcto** en cada uno (en claro se oscurecen, no se aclaran).
+    Sin `color-mix()` a propósito: mismo argumento que `light-dark()` (webview del sistema).
+  - **`color-scheme` del editor** (`DiffView.svelte`): `.diff-host` heredaba la polaridad del CHROME,
+    pero editor y chrome se eligen por separado y el editor default es `githubDark` ⇒ al pulsar Light
+    los scrollbars del diff se volvían claros enmarcando un editor negro. Ahora el host declara la
+    polaridad de SU tema (`THEMES.find(...).dark`), lo que además arregla el caso espejo (chrome oscuro
+    + GitHub Light) que ya existía antes de este trabajo.
+- **Pendiente / no verificado**: la titlebar nativa de macOS sigue forzada a oscuro
+  (`src-tauri/src/lib.rs:277`, `set_theme(Some(Theme::Dark))`) ⇒ con el chrome CLARO desentona en Mac.
+  No se tocó: es la única línea de Rust del feature y no es verificable sin hardware Mac. El
+  `font-weight: 350` de Linux podría quedar anémico con texto oscuro sobre claro (la compensación se
+  calibró para texto claro sobre oscuro) — a juzgar a ojo en la app.
+
+### Modo "System": diferido a propósito (no es pereza, es honestidad)
+
+Se investigó a fondo construyendo el stack real que arrow fija (tao 0.35.3 + wry 0.55.1) y flipeando el
+color-scheme de GNOME en vivo. Conclusiones **medidas**, no recordadas:
+
+- `matchMedia('(prefers-color-scheme: dark)')` **NO sigue la preferencia del usuario en Linux**: sigue si
+  el tema GTK *tiene variante clara*. Con `Pop-dark` (dark-only, el default de Pop!_OS), poner GNOME en
+  claro deja el media query clavado en `dark=true` y **no dispara evento**. Falla en silencio — justo en
+  la plataforma principal de arrow.
+- `getCurrentWindow().theme()` **sí** es fiable en Linux: lectura *live* del portal XDG en cada llamada
+  (<10 ms), correcta en los 4 estados probados. No está cacheada.
+- `onThemeChanged()` / `tauri://theme-changed` **nunca dispara** en Linux: tao emite el evento con
+  `WindowId::dummy()` (`u32::MAX`) y tauri-runtime-wry lo descarta por no estar en `window_id_map`.
+- ⇒ Si se retoma: **polear `theme()`** dentro de Tauri (colgado del tick de 30 s de `App.svelte`), con
+  `matchMedia` solo en el build de navegador (encaja con el split de `api.ts`). Leer NO necesita ACL
+  (`core:window:allow-theme` ya viene en `core:default`); `allow-set-theme`, `allow-set-app-theme` y
+  `allow-set-background-color` NO están en el default set.
+- macOS lo **bloquea** hasta quitar el `set_theme(Some(Theme::Dark))` de `lib.rs:277`: es app-wide
+  (`[NSApp setAppearance:]`) y clava el `prefers-color-scheme` del WKWebView, no solo la titlebar.
+
 ## Backlog de ideas (sin comprometer fase)
 
 Mejoras propuestas que NO están en el roadmap de fases. A discutir/priorizar antes de implementar;

@@ -313,7 +313,7 @@
     position: fixed;
     inset: 0;
     z-index: 100;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--scrim);
     display: flex;
     align-items: flex-start;
     justify-content: center;
@@ -327,7 +327,7 @@
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 10px;
-    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-xl);
     overflow: hidden;
   }
   .head {
@@ -523,7 +523,7 @@
   }
   .clean:hover:not(:disabled) {
     background: var(--warn);
-    color: #000;
+    color: var(--on-accent);
     border-color: var(--warn);
   }
   .clean:disabled {
@@ -567,12 +567,17 @@
     cursor: pointer;
   }
   .go {
-    color: #000;
+    color: var(--on-accent);
     background: var(--warn);
     border: 1px solid var(--warn);
   }
+  /* Muted FILL, not blanket opacity: this state carries the in-flight label ("Running…",
+     "moving 3/12 to trash…") for a destructive action, so the text must stay readable.
+     `opacity` would composite the label into the fill, and since --on-accent flips per
+     theme, the light side washed out to 2.4:1. */
   .go:disabled {
-    opacity: 0.6;
+    background: var(--warn-dim);
+    border-color: var(--warn-dim);
     cursor: default;
   }
   .cancel {

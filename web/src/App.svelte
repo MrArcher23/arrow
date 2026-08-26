@@ -3,6 +3,7 @@
   import Sidebar from './components/Sidebar.svelte'
   import DiffView from './components/DiffView.svelte'
   import ThemeMenu from './components/ThemeMenu.svelte'
+  import AppearanceToggle from './components/AppearanceToggle.svelte'
   import WindowControls from './components/WindowControls.svelte'
   import OpenInEditor from './components/OpenInEditor.svelte'
   import WorktreesModal from './components/WorktreesModal.svelte'
@@ -15,6 +16,7 @@
   import { isLive, focusRepos as focusReposOf } from './lib/time'
   import { auditRepos, sessionRepos, uniqueSessions } from './lib/audit'
   import { DEFAULT_THEME } from './lib/themes'
+  import { loadAppearance, applyAppearance, type Appearance } from './lib/appearance'
   import type { Report, FileContent } from './lib/types'
 
   let report = $state<Report | null>(null)
@@ -25,6 +27,9 @@
   let diffView = $state<{ openSearch: () => void }>()
   let selected = $state<{ session: string; path: string } | null>(null)
   let theme = $state(localStorage.getItem('arrow.theme') ?? DEFAULT_THEME)
+  // Chrome appearance (light/dark). Separate from `theme`, which is the editor's
+  // syntax theme: one paints the app, the other paints the code.
+  let appearance = $state<Appearance>(loadAppearance())
   let showWorktrees = $state(false)
 
   // Active tab [Audit | Sessions], persisted. Audit = the original view
@@ -152,6 +157,10 @@
 
   $effect(() => {
     localStorage.setItem('arrow.theme', theme)
+  })
+
+  $effect(() => {
+    applyAppearance(appearance)
   })
 
   // Whether the (session, path) still exists in a freshly fetched report. Used to decide if the
@@ -315,6 +324,7 @@
         <button class="zpct" onclick={() => setZoom(1)} title="Reset zoom (Ctrl 0)" aria-label="Reset zoom">{zoomPct}%</button>
         <button class="zbtn" onclick={() => setZoom(zoomFactor + ZOOM_STEP)} title="Zoom in (Ctrl +)" aria-label="Zoom in">+</button>
       </div>
+      <AppearanceToggle current={appearance} onSelect={(a) => (appearance = a)} />
       <ThemeMenu current={theme} onSelect={(id) => (theme = id)} />
       <VersionBadge />
       <WindowControls />

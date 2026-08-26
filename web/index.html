@@ -4,6 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>arrow · audit of Claude Code changes</title>
+    <!-- Pre-paint guard. WebKitGTK paints an opaque WHITE webview by default (Tauri sets
+         no window backgroundColor), and app.css arrives as a render-blocking external
+         <link> — so without this, every cold start flashes a full-window white rectangle
+         before the app paints. These two rules also give `color-scheme` to the engine
+         early, which fixes the scrollbar/native-control flash on the way in. -->
+    <style>
+      :root {
+        color-scheme: dark;
+        background: #0d1117;
+      }
+      :root[data-theme="light"] {
+        color-scheme: light;
+        background: #ffffff;
+      }
+    </style>
+    <script>
+      // Synchronous on purpose: it must stamp <html> BEFORE the stylesheet resolves.
+      // Only reads the persisted value — the first-run seed (from the editor theme) is
+      // lib/appearance.ts's job, since it needs the theme table.
+      try {
+        var a = localStorage.getItem('arrow.appearance')
+        if (a === 'light' || a === 'dark') document.documentElement.dataset.theme = a
+      } catch (e) {
+        /* private mode / storage disabled: fall through to the dark default */
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

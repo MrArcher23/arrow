@@ -228,7 +228,7 @@
     border-radius: 50%;
     background: var(--green);
     flex: none;
-    box-shadow: 0 0 6px var(--green);
+    box-shadow: var(--dot-glow);
   }
   .repo-name {
     font-weight: 600;

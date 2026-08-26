@@ -51,6 +51,9 @@
     background: var(--hover);
     color: var(--fg);
   }
+  /* Not --on-accent on purpose: a white glyph on a red close button is the universal
+     convention, and it holds in both palettes (3.4:1 on the dark --red as a graphical
+     object, 5.4:1 on the light one). --on-accent would flip it to black on dark. */
   .wbtn.close:hover {
     background: var(--red);
     color: #fff;
